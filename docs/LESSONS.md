@@ -36,3 +36,11 @@
 - 正确做法：`border-*`、`outline-*`、`fill`、`stroke`、`color`、`background-color`、字号、行高、宽高一律写全，不做默认值比较；其余属性可以比较后省略。
 - 证据：[docs/recon/2026-11-02-侦察记录.md](recon/2026-11-02-侦察记录.md)「离线 HTML 快照实验」；对比截图在证据目录 `2026-11-02-recon/02-快照v1-边框坑.jpg`、`03-快照v2-修正后.jpg`。
 - 升级：未升级。
+
+## L-02 声明了 `<all_urls>` 仍无法调用 `captureVisibleTab`（2026-11-02）
+
+- 现象：原型① 的内容脚本请后台调用 `chrome.tabs.captureVisibleTab`，报错 `The 'activeTab' permission is not in effect because this extension has not been in invoked.`；manifest 已声明 `host_permissions: ["<all_urls>"]`，标签页可见且有焦点。
+- 根因：未核实。推测本机 Chrome 对该扩展的站点访问设为“点击时”，或该接口实际要求扩展被用户调用过（点插件图标、快捷键等）。
+- 正确做法：需要截可视区时，从用户点插件图标（`action`）或快捷键触发，并声明 `activeTab`；不要指望页面内按钮点击能授权。本项目主方案已改为快照栅格化，不依赖该接口。
+- 证据：[docs/recon/2026-11-02-原型1-长图.md](recon/2026-11-02-原型1-长图.md)「结果」表 B 行。
+- 升级：未升级。

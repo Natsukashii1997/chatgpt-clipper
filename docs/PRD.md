@@ -70,7 +70,7 @@ tags: [chatgpt收藏]
 
 - **定位回答**：用稳定的数据属性 `[data-chatgpt-search-unit-key$=":assistant"]`，不依赖带哈希后缀的类名；选择器集中在一个适配模块里，ChatGPT 改版时只改这一处。
 - **离线 HTML**：复制回答节点，逐元素写入计算后样式，去掉类名和脚本；边框、颜色、填充、字号、行高、宽高必须写全（避开 Tailwind `0 solid` 的坑）；处理伪元素；图片转 base64。系统字体，不打包字体。
-- **长图**：回答在内部滚动容器 `.thread-scroll-container` 里，不能直接用 `captureBeyondViewport`。候选方案：① `chrome.debugger` + CDP 临时撑开容器后截取节点区域；② `captureVisibleTab` 分段滚动拼接；③ 用离线 HTML 在插件页里渲染后截图。**M1 第一个原型先比较这三种**。
+- **长图**（[原型①结论](recon/2026-11-02-原型1-长图.md)）：用离线快照经 SVG foreignObject 栅格化成 PNG，和 HTML 出自同一份快照；与浏览器真实渲染逐像素对比，布局完全重合，只有字形抗锯齿差异。CDP 撑高视口截图（需 `debugger` 权限）留作后备和回归基准；滚动拼接方案放弃。
 - **Markdown**：针对 DIL 组件（Box / Grid / Text / Table / MarkdownRoot）写转换规则。
 - **写入 Obsidian**：设置页用 File System Access API 选目标文件夹，保存目录句柄（IndexedDB），之后直接写；不依赖 Obsidian 插件或本地服务。
 - **技术栈**：MV3 + TypeScript + WXT；测试用 Playwright 跑固定测试页，另加真实 ChatGPT 页面的手工验证。
@@ -91,7 +91,7 @@ tags: [chatgpt收藏]
 | 阶段 | 内容 | 门槛 |
 |---|---|---|
 | M0 侦察 | ✅ 2026-11-02 完成：卡片在主 DOM；HTML 快照可行 | — |
-| M1 MVP | ① 长图三方案比较 → ② 插件骨架 + 收藏按钮 → ③ 三件套生成 → ④ 写入 Vault → ⑤ 验收矩阵 | 第 7 节全过，用户日常使用一周无阻断 |
+| M1 MVP | ① 长图三方案比较（✅ 2026-11-02 选定快照栅格化）→ ② 插件骨架 + 收藏按钮 → ③ 三件套生成（补图片内联、公式字体、伪元素）→ ④ 写入 Vault → ⑤ 验收矩阵 | 第 7 节全过，用户日常使用一周无阻断 |
 | M2 增强 | 在 Obsidian 里直接渲染 HTML 原件（小插件）；整段对话收藏；自动标签；研究能否保存 DIL 原始描述 | 用户确认需要 |
 | M3 编辑 | 基于 HTML 原件编辑再导出；参考 v1 的编辑器、Figma 部分 | 用户确认需要 |
 
@@ -99,4 +99,4 @@ tags: [chatgpt收藏]
 
 1. 笔记带提问原文，折叠放在顶部。
 2. 存到 `00 待整理/ChatGPT收藏/`，图片和 HTML 跟随 Vault 的 git 管理，量大后再考虑排除。
-3. 截图期间出现的“正在调试”提示条可以接受。
+3. 截图期间出现的“正在调试”提示条可以接受（原型①后主方案不再需要 `debugger`，只在后备方案里出现）。
