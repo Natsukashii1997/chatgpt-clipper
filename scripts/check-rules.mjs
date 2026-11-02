@@ -17,7 +17,8 @@ const TIME = [/\b\w*(?:At|_at)\.slice\(\s*(?:0\s*,\s*1[06]|5\s*,\s*16|11\s*,\s*1
 const TIME_OK = /\/[/*]\s*北京时间/;
 const LISTEN_OK = /\.listen\(\s*[\w.]+\s*,\s*['"]127\.0\.0\.1['"]/;
 // package.json 用白名单：黑名单认不出新出的库，白名单逼着每个新依赖都过一遍交接
-const ALLOWED_DEPS = [];
+// wxt：MV3 插件构建（PRD 第 5 节技术栈）；typescript：类型检查；playwright：带插件跑固定测试页（M1 ②）
+const ALLOWED_DEPS = ['wxt', 'typescript', 'playwright'];
 
 function files(dir) {
   if (!fs.existsSync(dir)) return [];
