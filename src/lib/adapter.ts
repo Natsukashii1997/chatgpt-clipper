@@ -63,4 +63,14 @@ export const MD = {
   tex: 'annotation[encoding="application/x-tex"]',
   /** 代码块语言：pre > code.language-xxx */
   codeLang: (code: Element | null) => code?.className.match(/language-([\w+#-]+)/)?.[1] ?? '',
+  /** ChatGPT 自己的代码块（M1 验收 T1 实测）：块头在 exclude 里（图标 + 语言名 + 按钮）；
+   *  可运行的用代码编辑器显示，带 data-language 的元素下一行一个 div；只读的是 pre > code，语言只写在块头 */
+  codeBlock: '[data-markdown-copy="code-block"]',
+  codeEditor: '[data-language]',
+  codeBlockLang: (block: Element) => {
+    const editor = block.querySelector<HTMLElement>('[data-language]');
+    if (editor) return editor.dataset.language!;
+    const label = [...block.querySelectorAll('[data-markdown-copy="exclude"] > div')].find(d => !d.children.length);
+    return (label?.textContent ?? '').trim().toLowerCase().replace(/\s+/g, '-');
+  },
 };

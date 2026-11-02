@@ -34,6 +34,7 @@ export function answerToMarkdown(answer: HTMLElement, opts: { exclude?: string }
     // 文档块自带 Markdown 原文，直接用；块头和按钮不要
     const src = el.matches(MD.widget) ? el.querySelector(`[${MD.sourceAttr}]`) : el.hasAttribute(MD.sourceAttr) ? el : null;
     if (src) return [src.getAttribute(MD.sourceAttr)!.trim()];
+    if (el.matches(MD.codeBlock)) return [codeBlock(el)];
     if (el.matches(MD.katexDisplay)) return [`$$\n${tex(el)}\n$$`];
     const tag = el.tagName;
     if (/^H[1-6]$/.test(tag)) {
@@ -156,11 +157,23 @@ function hidden(el: Element): boolean {
   return cs.position === 'absolute' && r.width <= 1 && r.height <= 1;
 }
 
-function fence(pre: Element): string {
+function fence(pre: Element, lang?: string): string {
   const code = pre.querySelector('code');
-  const body = (code ?? pre).textContent!.replace(/\n$/, '');
+  return fenced((code ?? pre).textContent!.replace(/\n$/, ''), lang ?? MD.codeLang(code));
+}
+
+/** ChatGPT 的代码块：代码编辑器逐行取（空行里只有 br），否则取 pre；语言看编辑器或块头 */
+function codeBlock(block: Element): string {
+  const lang = MD.codeBlockLang(block);
+  const editor = block.querySelector(MD.codeEditor);
+  if (editor) return fenced([...editor.children].filter(l => l.tagName === 'DIV').map(l => l.textContent ?? '').join('\n'), lang);
+  const pre = block.querySelector('pre');
+  return pre ? fence(pre, lang || undefined) : '';
+}
+
+function fenced(body: string, lang: string): string {
   const f = body.includes('```') ? '~~~~' : '```';
-  return `${f}${MD.codeLang(code)}\n${body}\n${f}`;
+  return `${f}${lang}\n${body}\n${f}`;
 }
 
 const tex = (el: Element) => (el.querySelector(MD.tex)?.textContent ?? el.textContent ?? '').trim();

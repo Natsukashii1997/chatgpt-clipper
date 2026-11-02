@@ -11,6 +11,7 @@ Chrome 桌面版 MV3 插件，常浩自用：在 ChatGPT 网页上一键把某�
 | 排障、改脚本、装 launchd 或定时任务 | 先 `grep -n 关键词 docs/LESSONS.md`，再搜全局坑 `/Users/nat/Documents/ChatGPT/个人/work/agent-kit/LESSONS.md` |
 | 开需求、拆任务、实现、审查 | 下面「Agent skills」一节 |
 | 写交接、验收别人的交接 | [docs/templates/handoff.md](docs/templates/handoff.md) 骨架；[OPERATIONS](docs/OPERATIONS.md)「交接写法」「报告与验收」 |
+| 做 M1 验收、看哪类没过 | [docs/acceptance/M1-验收矩阵.md](docs/acceptance/M1-验收矩阵.md) |
 
 项目长出接口、样式、发布等文档后，在这张表里加一行。
 
@@ -40,6 +41,7 @@ docs/
   LESSONS.md         本项目的坑（排障、改脚本前先搜）
   OPERATIONS.md      操作手册：交接写法、报告与验收
   templates/handoff.md  交接一节的骨架
+  acceptance/        验收矩阵（样本只写代号，证据不入库）
 scripts/
   check-rules.mjs    通用规则检查（只查机器能判定的）
 tests/               node:test 测试

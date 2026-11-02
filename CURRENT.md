@@ -1,6 +1,28 @@
 # 当前状态
 
-更新：2026-11-02。M1 ③④ 完成并提交（b1891f2），随后修了卡片流程图的层级。唯一下一步：M1 ⑤ 验收矩阵（PRD 第 7 节）。
+更新：2026-11-02。M1 ⑤ 验收矩阵第一轮对比完成，见 [docs/acceptance/M1-验收矩阵.md](docs/acceptance/M1-验收矩阵.md)；代码块笔记（P7、P8）已修。唯一下一步：常浩定下一批修哪些（Claude 建议长图的图片、公式 P4、P5、P10）；深色模式、长代码、S1–S3 的 DPR 2 长图对比还没做。
+
+## M1 ⑤ 修代码块笔记 P7、P8（2026-11-02，Claude，用户看过矩阵后选“先修代码块”，修后“已重新收藏”、看过结果后“提交”；已提交、无需发布）
+
+- 时间：开工 `2026-11-02 21:15`（同上一节，同一会话接着做，没另记）。来由：验收矩阵 T1 代码块笔记不通过。
+- 改了哪些文件：`src/lib/adapter.ts`（`MD.codeBlock`、`MD.codeEditor`、`MD.codeBlockLang`：认 ChatGPT 代码块，语言取 `data-language` 或块头文字）；`src/lib/markdown.ts`（`codeBlock`：代码编辑器逐行取，否则取 pre；`fence` 可传语言，抽出 `fenced`）；`tests/fixtures/card-answer.html`（照 T1 真实结构加 Python 编辑器块和 Bash pre 块，含 `#` 注释和空行）；`tests/snapshot.test.mjs`（两条断言）；`docs/recon/2026-11-02-回答结构-转MD.md`（补代码块结构）；`docs/acceptance/M1-验收矩阵.md`（第 4 行、P7、P8）。
+- 测试：`node --test tests/*.test.mjs` 原样结果 `ℹ pass 18` / `ℹ fail 0`；`node scripts/check-rules.mjs` 输出 `通用规则检查通过`；`npm run compile` 无报错。新断言在改代码前报红（`笔记里缺少：```python…`），改后通过。
+- 验证：Claude 先用 Claude in Chrome 只读重开测试对话读代码块块头结构（未点击、未碰输入框，读完已关标签页）；常浩刷新插件后重新收藏 T1（21:44:34 覆盖写入），Claude 从磁盘读笔记：Python、Bash 都是带语言标记的代码块，24 行齐全，缩进、空行正确，`#` 注释不再变标题。
+- 截图：无新截图（证据为 Vault 里的笔记，测试对话内容不私密）。
+- 发布与回读：无需发布。
+- 与授权不一致之处、遗留问题、范围外发现：① 长代码（编辑器可能只渲染可见的一段）未验证。② P9 代码框内部滚动导致长图少行，属长图，留第二批。
+- 本轮新坑：无。
+
+## M1 ⑤ 验收矩阵：第一轮对比（2026-11-02，Claude，用户同意分批计划“按计划开工”，自己发了 5 条测试提问并收藏后说“都测试过了”、后与代码块修复一起“提交”；已提交、无需发布）
+
+- 时间：开工 `2026-11-02 21:15`（`date '+%F %H:%M'` 记录）。来由：PRD 第 7 节验收矩阵，M1 ⑤。
+- 改了哪些文件：新建 `docs/acceptance/M1-验收矩阵.md`（10 类加高清屏一行、样本代号、问题清单 P1–P12）；`AGENTS.md` 导航表和结构各加一行指向它。没改代码。
+- 测试：`node --test tests/*.test.mjs` 原样结果 `ℹ pass 18` / `ℹ fail 0`；`node scripts/check-rules.mjs` 输出 `通用规则检查通过`（只改了文档，代码未动）。
+- 验证：从磁盘读 Vault 里 T1–T5 的笔记和长图（21:33–21:37 写入）及 S1–S3 笔记结构；Claude 用 Claude in Chrome 新开标签页只读打开测试对话（DPR 2、窗口 1414 宽、浅色），用脚本读各回答高度和结构、截了 3 张图，未点击、未碰输入框，读完已关标签页。五条回答高度 1082、1940、337、867、448px，长图正好都是 2 倍，DPR 2 尺寸正确。页面结构新发现：可运行代码块是 `[data-client-defined-widget="code_block"]`，Python 用代码编辑器 `.cm-content[data-language=python]`、一行一个 `.cm-line`，Bash 是 `pre > code` 无语言类、语言写在块头；代码框内部滚动 431/504px；交互公式卡片是 `[data-client-defined-widget="learning_block"]`，函数图是 canvas；搜索图片是 `data-d-component="image"`，图片来自跨域 `images.openai.com`（直接请求返回 200）；链接后的来源胶囊是 `badge` 里的 `favicon`。
+- 截图：证据目录 `~/Library/Application Support/chatgpt-clipper/evidence/2026-11-02-m1-5-acceptance/`（`page-T1-代码块.jpg`、`page-T2-公式卡片.jpg`、`page-T4-图片.jpg`；截图带侧栏里的私人对话标题，不入库；`样本对照.md` 记 S1–S3 对应哪条私人对话）。
+- 发布与回读：无需发布。
+- 与授权不一致之处、遗留问题、范围外发现：① 不通过：代码块 MD（P7、P8）、公式长图（P4、P10）、图片长图（P5）；部分通过的问题见矩阵 P1–P3、P9、P11、P12。② 深色模式没收（T1、S1 的文件时间没变），待测。③ S1–S3 所在的私人对话没让我看，它们的 DPR 2 长图未与页面对比（M1 ② 在 DPR 1 比过一致，长图代码之后没改）。
+- 本轮新坑：无。
 
 ## 修卡片流程图层级（2026-11-02，Claude，用户说“接着修层级”、看过验证结果后“提交”；已提交、无需发布）
 
