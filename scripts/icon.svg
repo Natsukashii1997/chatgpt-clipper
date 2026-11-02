@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- 插件图标 A 版（用户 2026-11-02 选定）：橙底白色书签加勾，和页面上的收藏丝带同色同形。改完运行 node scripts/make-icons.mjs -->
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="#ffb020"/>
+  <path d="M40 22h48a4 4 0 0 1 4 4v80l-28-18-28 18V26a4 4 0 0 1 4-4z" fill="#fff"/>
+  <path d="M52 50l9 9 17-19" fill="none" stroke="#ffb020" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

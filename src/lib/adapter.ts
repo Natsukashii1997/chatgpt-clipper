@@ -26,3 +26,41 @@ export function answerTitle(el: HTMLElement): string {
     }
   return '';
 }
+
+/** 回答指纹：对话地址 + 回答全文的 SHA-256，用来认出「同一条回答」。
+ *  不用 data-chatgpt-search-unit-key（会整体平移，L-03）；回答重新生成、内容变了就算另一条。
+ *  用 textContent 不用 innerText：不随悬停、折叠等显示状态变化 */
+export async function answerFingerprint(el: HTMLElement): Promise<string> {
+  const text = `${location.origin}${location.pathname}\n${(el.textContent ?? '').replace(/\s+/g, ' ').trim()}`;
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** 提问原文：回答前面最近的那条 `:user` 消息（真实页面同一轮，测试页跨轮，见 docs/recon/2026-11-02-回答结构-转MD.md） */
+export function answerQuestion(el: HTMLElement): string {
+  const users = [...document.querySelectorAll<HTMLElement>('[data-chatgpt-search-unit-key$=":user"]')]
+    .filter(u => u.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const u = users.at(-1);
+  if (!u) return '';
+  const copy = u.cloneNode(true) as HTMLElement;
+  copy.querySelectorAll(MD.skip).forEach(n => n.remove());
+  return (copy.textContent ?? '').trim();
+}
+
+/** 转 Markdown 用到的页面标记（DIL 组件看 data-d-component，见 docs/recon/2026-11-02-回答结构-转MD.md） */
+export const MD = {
+  /** 读屏专用标题、ChatGPT 复制时排除的元素 */
+  skip: '[data-conversation-role], [data-markdown-copy="exclude"]',
+  /** 文档块（writing block）和它自带的 Markdown 原文 */
+  widget: '[data-client-defined-widget]',
+  sourceAttr: 'data-markdown-copy-text',
+  /** DIL 组件名：卡片网格、网格项、容器、横排 */
+  component: (el: Element) => (el as HTMLElement).dataset?.dComponent ?? '',
+  hasBorder: (el: Element) => (el as HTMLElement).dataset?.dHasBorder !== undefined,
+  /** 公式：KaTeX 里的 TeX 源码、块级公式 */
+  katex: '.katex',
+  katexDisplay: '.katex-display',
+  tex: 'annotation[encoding="application/x-tex"]',
+  /** 代码块语言：pre > code.language-xxx */
+  codeLang: (code: Element | null) => code?.className.match(/language-([\w+#-]+)/)?.[1] ?? '',
+};

@@ -6,7 +6,7 @@ export default defineConfig({
   srcDir: 'src',
   manifest: {
     name: 'ChatGPT 回答收藏器',
-    description: '把 ChatGPT 的某条回答原样存成长图 PNG。全部本地处理，不上传。',
+    description: '把 ChatGPT 的某条回答存成长图和 Markdown 笔记，写进 Obsidian。全部本地处理，不上传。',
     permissions: ['downloads'],
   },
 });

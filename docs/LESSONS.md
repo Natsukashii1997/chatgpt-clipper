@@ -52,3 +52,27 @@
 - 正确做法：`data-chatgpt-search-unit-key` 只用来在当前页面定位回答（看末尾 `:assistant`），不当作跨次加载的稳定 ID，不写进笔记、不用来去重；要指认某条回答时同时记高度或开头文字。
 - 证据：本轮交接「验证」一行；证据目录 `2026-11-02-m1-2-real-page/`。
 - 升级：未升级。
+
+## L-04 回答内容晚于回答节点出现，挂丝带时读到的文字不全（2026-11-02）
+
+- 现象：收藏过的回答刷新页面后丝带仍是黄色（未收藏），测试页上却正常。
+- 根因：真实页面先放出 `[data-chatgpt-search-unit-key$=":assistant"]` 节点，回答内容稍后才填进去；内容脚本在节点出现时就算指纹查「是否收藏过」，此时文字不全，之后内容补齐也没再查。测试页是静态的，内容一开始就在，所以测不出来。另：指纹原用 `innerText`，会随悬停、折叠等显示状态变化。
+- 正确做法：凡是读回答内容做判断的，都要在内容变化后重做（本项目：每次扫描比较 `textContent` 长度，变了就重查）；指纹用 `textContent`，不用 `innerText`。测试里用 `addInitScript` 把回答先清空、1.5 秒后再放回去，复现「内容晚到」。
+- 证据：本轮交接「测试」一行（改前该用例报红、改后通过）；`tests/snapshot.test.mjs` 写入 Vault 用例。
+- 升级：已写成测试（同上）。
+
+## L-05 Playwright 指定 downloadsPath 后，下载的文件名是随机 GUID（2026-11-02）
+
+- 现象：测试按 `.md` / `.png` 扩展名找下载文件，全部找不到。
+- 根因：`launchPersistentContext({ downloadsPath })` 下，Chromium 把文件存成 GUID 文件名（无扩展名），`chrome.downloads.search` 返回的 `filename` 也是这个路径。
+- 正确做法：按 `DownloadItem.url` 的数据类型（`data:text/markdown`、`data:image/png`）或 `mime` 区分文件，不按文件名。
+- 证据：`tests/snapshot.test.mjs` 的 `file()` 函数。
+- 升级：未升级。
+
+## L-06 刚选完 Vault 文件夹，第一次收藏就报「授权已失效」（2026-11-02）
+
+- 现象：用户在设置页选好文件夹后去收藏，后台 `queryPermission({ mode: 'readwrite' })` 返回非 `granted`，退回下载；点「去授权」→「重新授权」后正常，之后关掉设置页、⌘Q 重启 Chrome 都不用再授权。
+- 根因：未核实。用户记不清当时的先后顺序和弹窗选项；推测第一次选目录时只给了临时授权，重新授权时 Chrome 给了持久授权。
+- 正确做法：保留「授权失效 → 退回下载 + 去授权」这条路，不假设授权一直有效；设置页在 `prompt` 状态时给「重新授权」按钮。
+- 证据：证据目录 `2026-11-02-md-vault/`（`3.png` 授权失效卡片、`downloads-listing.txt` 18:20:43 退回下载、`vault-listing.txt` 之后的写入时间）；Chrome 进程启动时间 19:57:52 前后两次写入均成功。
+- 升级：未升级。
