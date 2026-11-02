@@ -47,7 +47,18 @@ export function answerToMarkdown(answer: HTMLElement, opts: { exclude?: string }
     if (tag === 'HR') return ['---'];
     const comp = MD.component(el);
     if (comp === 'grid') return nonEmpty(kids(el).map(card).filter(Boolean).join('\n'));
-    if (comp === 'grid-item' || (comp === 'box' && MD.hasBorder(el))) return nonEmpty(card(el));
+    if (comp === 'grid-item') return nonEmpty(card(el));
+    if (comp === 'box' && MD.hasBorder(el)) {
+      // 外框：第一个子元素就是另一个容器（没有自己的标题），里面的各块平铺，不把第一块当标题
+      const first = kids(el)[0];
+      return first && isContainer(first) ? blocks(el) : nonEmpty(card(el));
+    }
+    if (comp === 'box' && textOnly(el)) {
+      // 无边框的小卡片：只有文字、第一块是一行短字（如流程图里的「步骤名 + 说明」）
+      const bs = blocks(el);
+      if (bs.length >= 2 && !bs[0]!.includes('\n') && bs[0]!.length <= 60) return nonEmpty(item('- ', bs, true));
+      return bs;
+    }
     if (comp === 'row') {
       const bs = blocks(el);
       return bs.every(b => !b.includes('\n')) ? nonEmpty(bs.join(' ')) : bs;
@@ -61,6 +72,16 @@ export function answerToMarkdown(answer: HTMLElement, opts: { exclude?: string }
     // grid-item 里只包着一个带边框的 box：拆掉这一层，免得同一张卡片缩进两次
     for (let only = sole(inner); only && ['box', 'grid-item'].includes(MD.component(only)); only = sole(inner)) inner = only;
     return item('- ', blocks(inner), true);
+  }
+
+  /** 容器：DIL 的 box / grid、列表、表格 */
+  function isContainer(el: Element): boolean {
+    return ['box', 'grid', 'grid-item', 'table', 'list'].includes(MD.component(el)) || ['UL', 'OL', 'TABLE', 'PRE', 'BLOCKQUOTE'].includes(el.tagName);
+  }
+
+  /** 只装着文字：段落、标题、只放文字和图标的横排 */
+  function textOnly(el: Element): boolean {
+    return kids(el).every(k => !isContainer(k) && (MD.component(k) !== 'row' || textOnly(k)));
   }
 
   function sole(el: Element): Element | null {
