@@ -264,8 +264,11 @@ test('正文：标题、卡片、列表、表格、代码、公式、链接、�
   has('| 字段 | 说明 |\n| --- | --- |\n| 第一段<br>第二段 | 含 a\\|b 竖线 |');
   has('```python\ndef hello():\n    return "hi"\n```');
   // 真实页面的代码块：可运行的用代码编辑器一行一个 div，语言在 data-language；只读的是 pre，语言只写在块头（M1 验收 P7、P8）
-  has('```python\ndef quick_sort(arr):\n    # 递归终止条件\n    if len(arr) <= 1:\n\n        return arr\n```');
-  has('```bash\n# 统计文件数\nfind . -maxdepth 1 -type f | wc -l\n```');
+  // 代码里连续的空行原样保留，不跟正文一起合并（M1 验收 T6）
+  has('```python\ndef quick_sort(arr):\n    # 递归终止条件\n    if len(arr) <= 1:\n\n        return arr\n\n\n# 测试示例\n```');
+  has('```bash\n# 统计文件数\nfind . -maxdepth 1 -type f | wc -l\n\n\nfind . -type f | wc -l\n```');
+  // 长代码：编辑器只渲染看得见附近的行，转 MD 前要把代码框滚一遍读全，占位块不算一行（M1 验收 P13）
+  has(`\`\`\`python\n${Array.from({ length: 120 }, (_, i) => `x${i + 1} = ${i + 1}  # 第 ${i + 1} 行`).join('\n')}\n\`\`\``);
   has('质能公式 $E = mc^2$ 是行内公式。');
   has('$$\n\\int_0^1 x\\,dx = \\frac{1}{2}\n$$');
   has('> 引用的一句话。');

@@ -135,15 +135,19 @@ pre .hdr button{background:none;color:inherit;font:inherit;padding:0}
 <div data-d-component="table" class="Table-tb1c2d"><table><tbody><tr data-d-component="table-row"><th data-d-component="table-cell">字段</th><th data-d-component="table-cell">说明</th></tr><tr data-d-component="table-row"><td data-d-component="table-cell"><p>第一段</p><p>第二段</p></td><td data-d-component="table-cell"><p>含 a|b 竖线</p></td></tr></tbody></table></div>
 <pre class="Code-p0q1r2"><div class="hdr">python<button>复制代码</button></div><code class="language-python">def hello():
     return "hi"</code></pre>
-<div data-client-defined-widget="code_block"><div data-code-block="true" data-markdown-copy="code-block"><div data-markdown-copy="exclude" contenteditable="false"><svg viewBox="0 0 20 20" width="14" height="14"><path d="M4 4h12" stroke="currentColor"/></svg><div>Python</div><div><div data-code-block-controls="true"><button type="button">复制代码</button><button type="button">运行</button></div></div></div><div class="cm-content" contenteditable="true" role="textbox" data-language="python" style="font:13px/1.6 ui-monospace,Menlo,monospace;white-space:pre"><div class="cm-line"><span>def</span> <span>quick_sort</span>(<span>arr</span>):</div><div class="cm-line">    <span># 递归终止条件</span></div><div class="cm-line">    <span>if</span> len(arr) &lt;= 1:</div><div class="cm-line"><br></div><div class="cm-line">        <span>return</span> arr</div></div></div></div>
+<div data-client-defined-widget="code_block"><div data-code-block="true" data-markdown-copy="code-block"><div data-markdown-copy="exclude" contenteditable="false"><svg viewBox="0 0 20 20" width="14" height="14"><path d="M4 4h12" stroke="currentColor"/></svg><div>Python</div><div><div data-code-block-controls="true"><button type="button">复制代码</button><button type="button">运行</button></div></div></div><div class="cm-content" contenteditable="true" role="textbox" data-language="python" style="font:13px/1.6 ui-monospace,Menlo,monospace;white-space:pre"><div class="cm-line"><span>def</span> <span>quick_sort</span>(<span>arr</span>):</div><div class="cm-line">    <span># 递归终止条件</span></div><div class="cm-line">    <span>if</span> len(arr) &lt;= 1:</div><div class="cm-line"><br></div><div class="cm-line">        <span>return</span> arr</div><div class="cm-line"><br></div><div class="cm-line"><br></div><div class="cm-line"><span># 测试示例</span></div></div></div></div>
 <div data-client-defined-widget="code_block"><div data-code-block="true" data-markdown-copy="code-block"><div data-markdown-copy="exclude" contenteditable="false"><svg viewBox="0 0 20 20" width="14" height="14"><path d="M4 4h12" stroke="currentColor"/></svg><div>Bash</div><div><div data-code-block-controls="true"><button type="button">复制代码</button></div></div></div><pre style="white-space:pre"><code><span># 统计文件数</span><span>
-</span><span>find . -maxdepth 1 -type f | wc -l</span></code></pre></div></div>
+</span><span>find . -maxdepth 1 -type f | wc -l</span><span>
+
+
+</span><span>find . -type f | wc -l</span></code></pre></div></div>
 <p class="Text-t4e5f6">质能公式 <span class="katex"><span class="katex-mathml"><math><semantics><mrow><mi>E</mi></mrow><annotation encoding="application/x-tex">E = mc^2</annotation></semantics></math></span><span class="katex-html" aria-hidden="true">E=mc²</span></span> 是行内公式。</p>
 <span class="katex-display"><span class="katex"><span class="katex-mathml"><math><semantics><mrow><mi>x</mi></mrow><annotation encoding="application/x-tex">\int_0^1 x\,dx = \frac{1}{2}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true">∫x dx = 1/2</span></span></span>
 <blockquote><p>引用的一句话。</p></blockquote>
 <p class="Text-t4e5f6" data-d-component="text">详见 <span data-d-component="pressable" role="link" aria-label="Open 周报模板.xlsx">周报模板.xlsx</span><span data-markdown-copy="exclude" style="display:none">打开文件</span>，按模板填写。</p>
 <hr>
 <div class="wb" data-client-defined-widget="writing_block" data-testid="chatgpt-writing-block"><header>文档</header><div data-markdown-copy-text="# 周报模板&#10;&#10;- 本周完成&#10;- 下周计划" data-markdown-copy-content="true"><h1 style="font-size:18px;margin:4px 0">周报模板</h1><ul class="List-u8v9w0"><li>本周完成</li><li>下周计划</li></ul></div></div>
+<div data-client-defined-widget="code_block"><div data-code-block="true" data-markdown-copy="code-block"><div data-markdown-copy="exclude" contenteditable="false"><div>Python</div></div><div style="max-height:200px;overflow-y:auto"><div class="cm-content" id="long-editor" contenteditable="true" role="textbox" data-language="python" style="font:13px/20px ui-monospace,Menlo,monospace;white-space:pre"></div></div></div></div>
 </section>
 <section class="Box-s1e2c3" id="media">
 <h2 class="Text-h2a8b9" data-d-component="title">十、图片、字体与画布</h2>
@@ -168,6 +172,23 @@ pre .hdr button{background:none;color:inherit;font:inherit;padding:0}
 // 仿交互卡片里的函数图：页面脚本画在 canvas 上（真实页面 learning_block 用 chart.js）
 const g = document.getElementById('fixture-canvas').getContext('2d');
 g.fillStyle = '#1f8a4c'; g.fillRect(0, 0, 240, 120); g.fillStyle = '#fff'; g.fillRect(60, 30, 120, 60);
+
+// 仿代码编辑器（CodeMirror）只渲染代码框里看得见附近的行，其余换成一个占高度的 .cm-gap（M1 验收 P13，真实页面实测）：
+// 滚动后要过一会儿才补上新的行；滚过的行回到顶部后也不全收回（顶部最多留 30 行），页面文字因此变长
+const LINES = Array.from({ length: 120 }, (_, i) => `x${i + 1} = ${i + 1}  # 第 ${i + 1} 行`), H = 20, VIEW = 200;   // VIEW 同代码框 max-height，不在加载时量，免得量早了
+const ed = document.getElementById('long-editor'), pane = ed.parentElement;
+const gap = h => Object.assign(document.createElement('div'), { className: 'cm-gap', style: `height:${h}px` });
+let kept = 0;
+function render() {
+  const from = Math.max(0, Math.floor(pane.scrollTop / H) - 5), to = Math.min(LINES.length, Math.ceil((pane.scrollTop + VIEW) / H) + 5);
+  kept = Math.max(kept, Math.min(to, 30));
+  const head = Math.min(kept, from), end = Math.max(to, Math.min(kept, from ? 0 : kept));
+  ed.replaceChildren(...LINES.slice(0, head).map(line), ...(from > head ? [gap((from - head) * H)] : []),
+    ...LINES.slice(from, end).map(line), ...(end < LINES.length ? [gap((LINES.length - end) * H)] : []));
+}
+function line(t) { return Object.assign(document.createElement('div'), { className: 'cm-line', textContent: t }); }
+pane.addEventListener('scroll', () => setTimeout(render, 100));
+render();
 </script>
 </body>
 </html>

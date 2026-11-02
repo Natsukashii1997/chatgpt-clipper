@@ -29,9 +29,12 @@ export function answerTitle(el: HTMLElement): string {
 
 /** 回答指纹：对话地址 + 回答全文的 SHA-256，用来认出「同一条回答」。
  *  不用 data-chatgpt-search-unit-key（会整体平移，L-03）；回答重新生成、内容变了就算另一条。
- *  用 textContent 不用 innerText：不随悬停、折叠等显示状态变化 */
+ *  用 textContent 不用 innerText：不随悬停、折叠等显示状态变化。
+ *  代码编辑器里的文字不算：它只渲染看得见附近的行，滚动过后渲染的行数会变（M1 验收 T6） */
 export async function answerFingerprint(el: HTMLElement): Promise<string> {
-  const text = `${location.origin}${location.pathname}\n${(el.textContent ?? '').replace(/\s+/g, ' ').trim()}`;
+  const copy = el.cloneNode(true) as HTMLElement;
+  copy.querySelectorAll(`${MD.codeBlock} ${MD.codeEditor}`).forEach(n => n.remove());
+  const text = `${location.origin}${location.pathname}\n${(copy.textContent ?? '').replace(/\s+/g, ' ').trim()}`;
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
@@ -67,6 +70,8 @@ export const MD = {
    *  可运行的用代码编辑器显示，带 data-language 的元素下一行一个 div；只读的是 pre > code，语言只写在块头 */
   codeBlock: '[data-markdown-copy="code-block"]',
   codeEditor: '[data-language]',
+  /** 编辑器（CodeMirror）的行；它只渲染看得见附近的行，其余换成占高度的 cm-gap（M1 验收 T6 实测）。类名来自 CodeMirror 库，不带哈希 */
+  codeLine: '.cm-line',
   codeBlockLang: (block: Element) => {
     const editor = block.querySelector<HTMLElement>('[data-language]');
     if (editor) return editor.dataset.language!;

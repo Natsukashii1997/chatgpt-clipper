@@ -1,5 +1,5 @@
 import { answerFingerprint, answerKey, answerQuestion, answerTitle, findAnswers } from '@/lib/adapter';
-import { answerToMarkdown, buildNote } from '@/lib/markdown';
+import { answerToMarkdown, buildNote, readCodeEditors } from '@/lib/markdown';
 import type { DownloadFile, FailCode, Request, Response } from '@/lib/messages';
 import { folderName, noteName } from '@/lib/naming';
 import { embedResources, takeSnapshot, toPng } from '@/lib/snapshot';
@@ -82,7 +82,7 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
     card.step(2, 'on');
     await nextFrame();
     try {
-      const body = answerToMarkdown(el, { exclude: `[${UI_ATTR}]` });
+      const body = answerToMarkdown(el, { exclude: `[${UI_ATTR}]`, code: await readCodeEditors(el) });
       const md = buildNote({ url: `${location.origin}${location.pathname}`, captured: started, title, question: answerQuestion(el), body, image: files.length > 0 });
       files.unshift({ name: noteName(title), url: `data:text/markdown;charset=utf-8,${encodeURIComponent(md)}` });
       card.step(2, 'ok', `${body.length} 字`);

@@ -9,8 +9,8 @@ const BLOCK = new Set(['P', 'DIV', 'SECTION', 'ARTICLE', 'MAIN', 'HEADER', 'FOOT
 const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'BUTTON', 'svg', 'SVG', 'INPUT', 'TEXTAREA', 'SELECT', 'CANVAS',
   'VIDEO', 'AUDIO', 'IFRAME']);
 
-/** 把一条回答转成 Markdown 正文。exclude：插件自己挂在回答里的节点 */
-export function answerToMarkdown(answer: HTMLElement, opts: { exclude?: string } = {}): string {
+/** 把一条回答转成 Markdown 正文。exclude：插件自己挂在回答里的节点；code：readCodeEditors 读全的长代码 */
+export function answerToMarkdown(answer: HTMLElement, opts: { exclude?: string; code?: Map<Element, string> } = {}): string {
   const skip = (el: Element) => SKIP.has(el.tagName) || el.matches(MD.skip) || (!!opts.exclude && el.matches(opts.exclude)) || hidden(el);
   const isBlock = (el: Element) => BLOCK.has(el.tagName) || el.matches(MD.katexDisplay);
   const kids = (el: Element) => [...el.children].filter(c => !skip(c));
@@ -34,7 +34,7 @@ export function answerToMarkdown(answer: HTMLElement, opts: { exclude?: string }
     // 文档块自带 Markdown 原文，直接用；块头和按钮不要
     const src = el.matches(MD.widget) ? el.querySelector(`[${MD.sourceAttr}]`) : el.hasAttribute(MD.sourceAttr) ? el : null;
     if (src) return [src.getAttribute(MD.sourceAttr)!.trim()];
-    if (el.matches(MD.codeBlock)) return [codeBlock(el)];
+    if (el.matches(MD.codeBlock)) return [codeBlock(el, opts.code)];
     if (el.matches(MD.katexDisplay)) return [`$$\n${tex(el)}\n$$`];
     const tag = el.tagName;
     if (/^H[1-6]$/.test(tag)) {
@@ -136,7 +136,48 @@ export function answerToMarkdown(answer: HTMLElement, opts: { exclude?: string }
     return s;
   }
 
-  return blocks(answer).join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
+  // 连续空行合并成一个，但代码块里的原样保留（M1 验收 T6）：奇数段是代码块
+  return blocks(answer).join('\n\n').split(FENCE).map((p, i) => (i % 2 ? p : p.replace(/\n{3,}/g, '\n\n'))).join('').trim();
+}
+
+/** 整个代码块（围栏可能因在列表里而缩进）；split 时整块落在奇数位 */
+const FENCE = /(^ *(?:```|~~~~)[^\n]*\n[\s\S]*?\n *(?:```|~~~~)$)/m;
+
+/** 长代码读全（M1 验收 P13）：编辑器只渲染代码框里看得见附近的行，其余是占位块。有占位块的，把代码框滚到页面里、
+ *  从头到尾逐段滚动，每段等编辑器补完再读，按行在编辑器里的位置去重；读完还原滚动位置（编辑器渲染了哪些行不一定还原）。
+ *  没有占位块的不动页面 */
+export async function readCodeEditors(answer: Element): Promise<Map<Element, string>> {
+  const out = new Map<Element, string>();
+  for (const editor of answer.querySelectorAll(`${MD.codeBlock} ${MD.codeEditor}`)) {
+    if (codeLines(editor).length === editor.children.length) continue;
+    let box = editor.parentElement;
+    while (box && !(box.scrollHeight > box.clientHeight && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
+    if (!box || !answer.contains(box)) continue;
+    const lines = new Map<number, string>(), x = scrollX, y = scrollY, top = box.scrollTop;
+    const read = () => {
+      const base = editor.getBoundingClientRect().top;
+      for (const l of codeLines(editor)) lines.set(Math.round(l.getBoundingClientRect().top - base), l.textContent ?? '');
+    };
+    try {
+      box.scrollIntoView({ block: 'nearest' });
+      for (let at = 0; ; at += box.clientHeight) {
+        box.scrollTop = at;
+        // 编辑器滚动后不一定下一帧就补上新的行：等到代码框看得见的范围里没有占位块再读（最多约 1 秒）
+        for (let i = 0; i < 60; i++) {
+          await new Promise(r => requestAnimationFrame(r));
+          const v = box.getBoundingClientRect();
+          if (![...editor.children].some(c => { const r = c.getBoundingClientRect(); return !c.matches(MD.codeLine) && r.top < v.bottom && r.bottom > v.top; })) break;
+        }
+        read();
+        if (at + box.clientHeight >= box.scrollHeight) break;
+      }
+    } finally {
+      box.scrollTop = top;
+      scrollTo(x, y);
+    }
+    out.set(editor, [...lines].sort((a, b) => a[0] - b[0]).map(([, t]) => t).join('\n'));
+  }
+  return out;
 }
 
 /** 整篇笔记：frontmatter + 折叠的提问 + 长图 + 正文（PRD 第 2 节模板） */
@@ -163,13 +204,16 @@ function fence(pre: Element, lang?: string): string {
 }
 
 /** ChatGPT 的代码块：代码编辑器逐行取（空行里只有 br），否则取 pre；语言看编辑器或块头 */
-function codeBlock(block: Element): string {
+function codeBlock(block: Element, code?: Map<Element, string>): string {
   const lang = MD.codeBlockLang(block);
   const editor = block.querySelector(MD.codeEditor);
-  if (editor) return fenced([...editor.children].filter(l => l.tagName === 'DIV').map(l => l.textContent ?? '').join('\n'), lang);
+  if (editor) return fenced(code?.get(editor) ?? codeLines(editor).map(l => l.textContent ?? '').join('\n'), lang);
   const pre = block.querySelector('pre');
   return pre ? fence(pre, lang || undefined) : '';
 }
+
+/** 编辑器的直接子元素里的代码行（不含占位块） */
+const codeLines = (editor: Element) => [...editor.children].filter(c => c.matches(MD.codeLine));
 
 function fenced(body: string, lang: string): string {
   const f = body.includes('```') ? '~~~~' : '```';
