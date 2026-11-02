@@ -49,7 +49,8 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
   if (busy.has(el)) return;
   busy.add(el);
   setRibbon('busy');
-  const title = answerTitle(el).slice(0, 120), started = new Date(), id = await answerFingerprint(el);
+  // 回答没有标题就用提问，最多 30 字（M1 验收 P12）
+  const title = (answerTitle(el) || answerQuestion(el).replace(/\s+/g, ' ').trim().slice(0, 30)).slice(0, 120), started = new Date(), id = await answerFingerprint(el);
   const card = progressCard();
   const files: DownloadFile[] = [], failed: string[] = [];
   const fail = (i: number, what: string, e: unknown, short = '失败') => {

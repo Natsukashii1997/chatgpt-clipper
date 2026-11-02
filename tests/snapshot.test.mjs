@@ -271,10 +271,14 @@ test('正文：标题、卡片、列表、表格、代码、公式、链接、�
   has(`\`\`\`python\n${Array.from({ length: 120 }, (_, i) => `x${i + 1} = ${i + 1}  # 第 ${i + 1} 行`).join('\n')}\n\`\`\``);
   has('质能公式 $E = mc^2$ 是行内公式。');
   has('$$\n\\int_0^1 x\\,dx = \\frac{1}{2}\n$$');
+  // 交互公式卡片：主公式写成独立公式，下面是示例结果；滑块不要（M1 验收 P10）
+  has('$$\nx = \\frac{-b}{2a}\n$$\n\n$\\Delta=16>0$\n\n两个实数根\n\n');
+  // 链接后的来源胶囊：站名放括号里，小图标不要（P11）
+  has('官方文档在这里。（示例站点）');
   has('> 引用的一句话。');
   has('详见 周报模板.xlsx，按模板填写。');
   has('---\n\n# 周报模板\n\n- 本周完成\n- 下周计划');
-  for (const bad of ['ChatGPT 说：', '打开文件', '复制代码', '文档\n', 'E=mc²', '⧉', '简短一点', '简版'])
+  for (const bad of ['ChatGPT 说：', '打开文件', '复制代码', '文档\n', 'E=mc²', '⧉', '简短一点', '简版', '提供反馈', '1.0', 'favicons'])
     assert.ok(!m.includes(bad), `笔记里不该有：${bad}`);
 });
 
@@ -295,4 +299,14 @@ test('正文：回答里看得见的文字全部保留（FR-4）', async () => {
   const missing = texts.filter(t => !m.includes(t));
   if (process.env.DUMP_MD) fs.writeFileSync(process.env.DUMP_MD, md());
   assert.deepEqual(missing, []);
+});
+
+test('回答没有标题时用提问当标题，最多 30 字（M1 验收 P12）', async () => {
+  const done = page.locator('clipper-dock .card.ok, clipper-dock .card.bad');
+  const before = await done.count();
+  await page.locator('[data-chatgpt-search-unit-key="fallback-turn-4:1:assistant"] clipper-ribbon button').click();
+  await done.nth(before).waitFor({ timeout: 30_000 });
+  const card = await done.nth(before).innerText();
+  assert.match(card, /\n简短一点\n/);
+  assert.doesNotMatch(card, /简版：/);
 });

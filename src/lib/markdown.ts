@@ -35,6 +35,7 @@ export function answerToMarkdown(answer: HTMLElement, opts: { exclude?: string; 
     const src = el.matches(MD.widget) ? el.querySelector(`[${MD.sourceAttr}]`) : el.hasAttribute(MD.sourceAttr) ? el : null;
     if (src) return [src.getAttribute(MD.sourceAttr)!.trim()];
     if (el.matches(MD.codeBlock)) return [codeBlock(el, opts.code)];
+    if (el.matches(MD.learning)) return learning(el);
     if (el.matches(MD.katexDisplay)) return [`$$\n${tex(el)}\n$$`];
     const tag = el.tagName;
     if (/^H[1-6]$/.test(tag)) {
@@ -65,6 +66,13 @@ export function answerToMarkdown(answer: HTMLElement, opts: { exclude?: string; 
       return bs.every(b => !b.includes('\n')) ? nonEmpty(bs.join(' ')) : bs;
     }
     return blocks(el);
+  }
+
+  /** 交互公式卡片：主公式（第一个不在示例结果、滑块里的公式）写成独立公式，示例结果每行一段 */
+  function learning(el: Element): string[] {
+    const main = [...el.querySelectorAll(MD.katex)].find(k => !k.closest(`${MD.learningCaption}, ${MD.learningInputs}`));
+    const captions = [...el.querySelectorAll(MD.learningCaption)].map(c => clean(inlineOf(c)));
+    return [...(main ? [`$$\n${tex(main)}\n$$`] : []), ...captions.filter(Boolean)];
   }
 
   /** 卡片 → 列表项：第一块当小标题加粗，其余转成下一级列表；卡片套卡片逐层缩进 */
@@ -107,6 +115,10 @@ export function answerToMarkdown(answer: HTMLElement, opts: { exclude?: string; 
 
   function inline(el: Element): string {
     if (el.tagName === 'BR') return '\n';
+    if (el.matches(MD.citation)) {
+      const t = clean(inlineOf(el)).replace(/\n+/g, ' ');
+      return t ? `（${t}）` : '';
+    }
     if (el.matches(MD.katex)) return `$${tex(el)}$`;
     if (el.tagName === 'IMG') {
       const src = (el as HTMLImageElement).src, alt = el.getAttribute('alt') ?? '';

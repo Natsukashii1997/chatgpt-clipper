@@ -4,8 +4,8 @@
 /** 每条助手回答：data-chatgpt-search-unit-key="fallback-turn-N:K:assistant" */
 export const ANSWER_SELECTOR = '[data-chatgpt-search-unit-key$=":assistant"]';
 
-/** 给收藏起名：先找标题，没有就找正文第一段 */
-const TITLE_SELECTORS = ['h1, h2, h3, h4, h5, h6', 'p, li'];
+/** 给收藏起名：回答里的标题；没有标题时由调用方改用提问（用户 2026-11-02 定，M1 验收 P12） */
+const TITLE_SELECTORS = ['h1, h2, h3, h4, h5, h6'];
 /** 回答左侧到 ChatGPT 外层裁剪容器（overflow-x: clip）的空白宽度，丝带只能画在这里面（2026-11-02 实测） */
 export const ANSWER_GUTTER = 20;
 
@@ -17,7 +17,7 @@ export function answerKey(el: HTMLElement): string {
   return el.dataset.chatgptSearchUnitKey ?? '';
 }
 
-/** 回答的标题：第一个看得见的标题，没有就取正文第一段。跳过「ChatGPT 说：」这类读屏专用的隐藏标题 */
+/** 回答的标题：第一个看得见的标题，没有就返回空。跳过「ChatGPT 说：」这类读屏专用的隐藏标题 */
 export function answerTitle(el: HTMLElement): string {
   for (const sel of TITLE_SELECTORS)
     for (const n of el.querySelectorAll<HTMLElement>(sel)) {
@@ -53,13 +53,19 @@ export function answerQuestion(el: HTMLElement): string {
 /** 转 Markdown 用到的页面标记（DIL 组件看 data-d-component，见 docs/recon/2026-11-02-回答结构-转MD.md） */
 export const MD = {
   /** 读屏专用标题、ChatGPT 复制时排除的元素 */
-  skip: '[data-conversation-role], [data-markdown-copy="exclude"]',
+  skip: '[data-conversation-role], [data-markdown-copy="exclude"], [data-d-component="favicon"]',
   /** 文档块（writing block）和它自带的 Markdown 原文 */
   widget: '[data-client-defined-widget]',
   sourceAttr: 'data-markdown-copy-text',
   /** DIL 组件名：卡片网格、网格项、容器、横排 */
   component: (el: Element) => (el as HTMLElement).dataset?.dComponent ?? '',
   hasBorder: (el: Element) => (el as HTMLElement).dataset?.dHasBorder !== undefined,
+  /** 链接后的来源胶囊：弹出层触发器里带网站小图标（favicon 已在 skip 里），只留站名（M1 验收 T3） */
+  citation: '[data-d-component="popover-trigger"]:has([data-d-component="favicon"])',
+  /** 交互公式卡片（learning_block，M1 验收 T2）：主公式、示例结果各一行；滑块、函数图、按钮不要 */
+  learning: '[data-learning-block]',
+  learningCaption: '[data-learning-block-caption-line]',
+  learningInputs: '[data-input-selector-group]',
   /** 公式：KaTeX 里的 TeX 源码、块级公式 */
   katex: '.katex',
   katexDisplay: '.katex-display',
