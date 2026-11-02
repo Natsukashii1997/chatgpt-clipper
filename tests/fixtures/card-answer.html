@@ -7,7 +7,7 @@
      选择器只认 data-chatgpt-search-unit-key；类名故意带哈希后缀；带 Tailwind 预设的 border:0 solid（LESSONS L-01）；
      外层 overflow-x:clip 容器只给回答左侧留 20px，回答开头有读屏专用的隐藏标题（2026-11-02 真实页面实测）。
      卡片、列表、表格、文档块、文件引用按真实页面的 data-d-component 等数据属性仿写；第九节是转 Markdown 用的格式样例
-     （docs/recon/2026-11-02-回答结构-转MD.md）。 -->
+     （docs/recon/2026-11-02-回答结构-转MD.md）；第十节是跨域图片（不带 CORS 头）、网页字体、脚本画的 canvas（M1 验收 P4、P5、P10）。 -->
 <style>
 *,::before,::after{box-sizing:border-box;border:0 solid #e5e5e5}
 :root{--text:#0d0d0d;--muted:#5d5d5d;--line:#e5e5e5;--soft:#f7f7f8;--accent:#2f6bff}
@@ -44,6 +44,7 @@ blockquote{margin:0 0 16px;padding-left:12px;border-left-width:3px;color:var(--m
 hr{border-top-width:1px;margin:16px 0}
 pre .hdr{display:flex;justify-content:space-between;color:#aaa;font-size:12px;margin-bottom:6px}
 pre .hdr button{background:none;color:inherit;font:inherit;padding:0}
+@font-face{font-family:TestFont;src:url("/cdn/assets/TestFont.ttf") format("truetype")}
 </style>
 </head>
 <body>
@@ -144,6 +145,12 @@ pre .hdr button{background:none;color:inherit;font:inherit;padding:0}
 <hr>
 <div class="wb" data-client-defined-widget="writing_block" data-testid="chatgpt-writing-block"><header>文档</header><div data-markdown-copy-text="# 周报模板&#10;&#10;- 本周完成&#10;- 下周计划" data-markdown-copy-content="true"><h1 style="font-size:18px;margin:4px 0">周报模板</h1><ul class="List-u8v9w0"><li>本周完成</li><li>下周计划</li></ul></div></div>
 </section>
+<section class="Box-s1e2c3" id="media">
+<h2 class="Text-h2a8b9" data-d-component="title">十、图片、字体与画布</h2>
+<div data-d-component="image" style="margin:0 0 12px"><img src="https://images.openai.com/fixture/bridge.svg" alt="测试图片" width="240" height="120" style="display:block"></div>
+<p class="Text-t4e5f6" style="font:40px/1.4 TestFont,monospace">Fixture Font</p>
+<canvas id="fixture-canvas" width="240" height="120" style="display:block"></canvas>
+</section>
       </div>
     </div>
     <div class="actions">⧉ 👍 👎 ↻</div>
@@ -157,5 +164,10 @@ pre .hdr button{background:none;color:inherit;font:inherit;padding:0}
     </div>
   </div>
 </main></div>
+<script>
+// 仿交互卡片里的函数图：页面脚本画在 canvas 上（真实页面 learning_block 用 chart.js）
+const g = document.getElementById('fixture-canvas').getContext('2d');
+g.fillStyle = '#1f8a4c'; g.fillRect(0, 0, 240, 120); g.fillStyle = '#fff'; g.fillRect(60, 30, 120, 60);
+</script>
 </body>
 </html>

@@ -31,9 +31,26 @@ async function handle(msg: Request): Promise<Response> {
     browser.downloads.show(msg.id);
     return { ok: true };
   }
+  if (msg.type === 'image') return { ok: true, dataUrl: await imageDataUrl(msg.url) };
   if (msg.type === 'options') {
     await browser.runtime.openOptionsPage();
     return { ok: true };
   }
   return { ok: false, error: '未知消息' };
+}
+
+// 长图里的跨域图片：页面不给 CORS 头，内容脚本读不到，由后台按 host_permissions 取（用户 2026-11-02 同意只加这两个域名）。
+// 和 wxt.config.ts 的 host_permissions 保持一致；只取图片，不带任何东西出去
+const IMAGE_HOSTS = /^(images\.openai\.com|([\w-]+\.)+oaiusercontent\.com)$/;
+
+async function imageDataUrl(url: string): Promise<string> {
+  const u = new URL(url);
+  if (u.protocol !== 'https:' || !IMAGE_HOSTS.test(u.hostname)) throw new Error(`不取这个域名的图片：${u.hostname}`);
+  const res = await fetch(u, { credentials: 'omit' });
+  const type = res.headers.get('content-type') ?? '';
+  if (!res.ok || !type.startsWith('image/')) throw new Error(`图片取不到：${res.status} ${type}`);
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return `data:${type.split(';')[0]};base64,${btoa(bin)}`;
 }

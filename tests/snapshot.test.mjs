@@ -13,6 +13,10 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const EXT = path.join(ROOT, '.output/chrome-mv3');
 const FIXTURE = fs.readFileSync(path.join(ROOT, 'tests/fixtures/card-answer.html'), 'utf8');
 const URL = 'https://chatgpt.com/c/fixture';
+// 第十节的外部资源：字体与页面同源；图片跨域且不带 CORS 头，和真实页面的 images.openai.com 一样内容脚本读不到
+const FONT_URL = 'https://chatgpt.com/cdn/assets/TestFont.ttf', FONT = fs.readFileSync('/System/Library/Fonts/Supplemental/Zapfino.ttf');
+const IMAGE_URL = 'https://images.openai.com/fixture/bridge.svg';
+const IMAGE = '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="120"><rect width="240" height="120" fill="#d9480f"/><circle cx="120" cy="60" r="40" fill="#1c7ed6"/></svg>';
 const ANSWER = '[data-chatgpt-search-unit-key="fallback-turn-2:1:assistant"]';
 // 单像素任一通道差超过 PIXEL_TOL 算不同；不同像素占比上限。快照与真实渲染只差字形抗锯齿（同一 Chromium 下实测 0.48%；原型①在真实 Chrome 里与 CDP 截图比是 4–6%）
 const PIXEL_TOL = 24, MAX_DIFF_RATIO = 0.03;
@@ -31,16 +35,25 @@ before(async () => {
     args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`],
   });
   // 只放行测试页，其余请求一律拦掉，顺带保证快照不依赖网络
-  await ctx.route('**/*', route => (route.request().url().startsWith(URL) ? route.fulfill({ contentType: 'text/html; charset=utf-8', body: FIXTURE }) : route.abort()));
+  await ctx.route('**/*', route => {
+    const url = route.request().url();
+    if (url.startsWith(URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: FIXTURE });
+    if (url === FONT_URL) return route.fulfill({ contentType: 'font/ttf', body: FONT });
+    if (url === IMAGE_URL) return route.fulfill({ contentType: 'image/svg+xml', body: IMAGE });
+    return route.abort();
+  });
   page = await ctx.newPage();
   await page.goto(URL);
   await page.locator(`${ANSWER} clipper-ribbon`).waitFor({ state: 'attached' });
+  await page.evaluate(() => document.fonts.ready);
+  await page.locator('#media img').evaluate(img => img.decode());
 
   const answer = page.locator(ANSWER);
   const box = await answer.boundingBox();
   const baseline = await answer.screenshot();   // 浏览器真实渲染，作对比基准；先截，免得截进进度卡
   const ribbon = await page.locator(`${ANSWER} clipper-ribbon button`).boundingBox();
   const clip = await page.locator('.clip').boundingBox();
+  const media = await page.locator('#media').boundingBox();
   await page.locator(`${ANSWER} clipper-ribbon button`).click();
   await page.locator('clipper-dock .card.ok, clipper-dock .card.bad').waitFor({ timeout: 30_000 });
   const card = await page.locator('clipper-dock .card').innerText();
@@ -52,7 +65,7 @@ before(async () => {
     if (items.length >= 2 && items.every(d => d.state === 'complete')) break;
     await new Promise(r => setTimeout(r, 200));
   }
-  result = { box, baseline, card, items, ribbon, clip };
+  result = { box, baseline, card, items, ribbon, clip, media };
 });
 
 after(async () => {
@@ -196,22 +209,36 @@ test('PNG 尺寸与回答一致（≥4000px 长图）', () => {
   assert.ok(h >= 4000, `测试页回答只有 ${h}px`);
 });
 
-test('PNG 与浏览器真实渲染逐像素比，只差抗锯齿', async () => {
+/** 两张 PNG 逐像素比，rect 只比回答里的这一块（相对回答左上角）；返回不同像素占比 */
+async function pixelDiff(a, b, rect) {
   const p = await ctx.newPage();
-  const stat = await p.evaluate(async ([a, b, tol]) => {
+  const stat = await p.evaluate(async ([a, b, tol, rect]) => {
     const load = async src => { const img = new Image(); img.src = src; await img.decode(); return img; };
     const [x, y] = await Promise.all([load(a), load(b)]);
-    const w = Math.min(x.width, y.width), h = Math.min(x.height, y.height);
-    const px = img => { const c = new OffscreenCanvas(w, h), g = c.getContext('2d'); g.drawImage(img, 0, 0); return g.getImageData(0, 0, w, h).data; };
+    const r = rect ?? { x: 0, y: 0, width: Math.min(x.width, y.width), height: Math.min(x.height, y.height) };
+    const w = Math.round(r.width), h = Math.round(r.height);
+    const px = img => { const c = new OffscreenCanvas(w, h), g = c.getContext('2d'); g.drawImage(img, -Math.round(r.x), -Math.round(r.y)); return g.getImageData(0, 0, w, h).data; };
     const da = px(x), db = px(y);
     let diff = 0;
     for (let i = 0; i < da.length; i += 4)
       if (Math.abs(da[i] - db[i]) > tol || Math.abs(da[i + 1] - db[i + 1]) > tol || Math.abs(da[i + 2] - db[i + 2]) > tol) diff++;
     return { ratio: diff / (w * h), sizes: [x.width, x.height, y.width, y.height] };
-  }, [`data:image/png;base64,${png().toString('base64')}`, `data:image/png;base64,${result.baseline.toString('base64')}`, PIXEL_TOL]);
+  }, [`data:image/png;base64,${a.toString('base64')}`, `data:image/png;base64,${b.toString('base64')}`, PIXEL_TOL, rect]);
   await p.close();
+  return stat;
+}
+
+test('PNG 与浏览器真实渲染逐像素比，只差抗锯齿', async () => {
+  const stat = await pixelDiff(png(), result.baseline);
   console.log(`  差异像素 ${(stat.ratio * 100).toFixed(2)}%，尺寸 ${stat.sizes.join('×')}`);
   assert.ok(stat.ratio < MAX_DIFF_RATIO, `差异像素 ${(stat.ratio * 100).toFixed(2)}% 超过 ${MAX_DIFF_RATIO * 100}%`);
+});
+
+test('长图里有跨域图片、网页字体、脚本画的 canvas（M1 验收 P4、P5、P10）', async () => {
+  const { media, box } = result;
+  const stat = await pixelDiff(png(), result.baseline, { x: media.x - box.x, y: media.y - box.y, width: media.width, height: media.height });
+  console.log(`  第十节差异像素 ${(stat.ratio * 100).toFixed(2)}%`);
+  assert.ok(stat.ratio < MAX_DIFF_RATIO, `第十节差异像素 ${(stat.ratio * 100).toFixed(2)}% 超过 ${MAX_DIFF_RATIO * 100}%：图片、字体或 canvas 没进长图`);
 });
 
 test('笔记：frontmatter、折叠的提问、嵌入长图', () => {

@@ -1,6 +1,17 @@
 # 当前状态
 
-更新：2026-11-02。M1 ⑤ 验收矩阵第一轮对比完成，见 [docs/acceptance/M1-验收矩阵.md](docs/acceptance/M1-验收矩阵.md)；代码块笔记（P7、P8）已修。唯一下一步：常浩定下一批修哪些（Claude 建议长图的图片、公式 P4、P5、P10）；深色模式、长代码、S1–S3 的 DPR 2 长图对比还没做。
+更新：2026-11-02。M1 ⑤ 验收矩阵第一轮对比完成，见 [docs/acceptance/M1-验收矩阵.md](docs/acceptance/M1-验收矩阵.md)；代码块笔记（P7、P8）、长图的公式字体、图片、函数图（P4、P5、P10 长图部分）已修。唯一下一步：常浩定下一批修哪些（剩 P1–P3、P9、P10 笔记部分、P11、P12）；深色模式、长代码、S1–S3 的 DPR 2 长图对比还没做。
+
+## M1 ⑤ 修长图的图片和公式 P4、P5、P10（2026-11-02，Claude，用户选“修图片和公式”，新增图片域名权限选“加两个 OpenAI 图片域名”，修后“已重新收藏”、看过结果后“提交”；已提交、无需发布）
+
+- 时间：开工 `2026-11-02 21:15`（同一会话接着做，没另记）。来由：验收矩阵 T2 公式长图、T4 图片长图不通过。
+- 改了哪些文件：`src/lib/snapshot.ts`（canvas 换成 `toDataURL()` 图片；新增 `embedResources`：图片换 data: 地址，同源直接取、跨域交给后台；用到且已加载的 `@font-face` 内嵌成 data: 字体）；`src/entrypoints/background.ts`（`image` 消息：只取 `images.openai.com`、`*.oaiusercontent.com` 的 https 图片，转 data: 地址）；`src/entrypoints/content.ts`（出 PNG 前调 `embedResources`）；`src/lib/messages.ts`（`image` 消息与 `dataUrl`）；`wxt.config.ts`（`host_permissions` 两个图片域名）；`README.md`（权限表）；`tests/fixtures/card-answer.html`（第十节：不带 CORS 头的跨域图片、同源网页字体、脚本画的 canvas）；`tests/snapshot.test.mjs`（对比函数抽成 `pixelDiff`，可只比一块；第十节区域对比；路由放行字体、图片）；`docs/LESSONS.md`（L-07）；`docs/recon/2026-11-02-回答结构-转MD.md`、`docs/acceptance/M1-验收矩阵.md`。没加依赖。
+- 测试：`node --test tests/*.test.mjs` 原样结果 `ℹ pass 19` / `ℹ fail 0`（整页差异 0.70%，第十节 0.87%）；`node scripts/check-rules.mjs` 输出 `通用规则检查通过`；`npm run compile` 无报错。新用例改前报红（第十节 14.70%）；反向验证：临时去掉 `embedResources` 调用，第十节 13.02% 报红，还原后通过并重新构建。
+- 验证：Claude 先用 Claude in Chrome 只读打开测试对话，读 KaTeX `@font-face` 来源与加载状态、图片在页面里能否 `fetch`（失败，无 CORS 头），未点击、未碰输入框，读完已关标签页。常浩刷新插件后重新收藏 T2、T3、T4（21:57:25–21:57:44），Claude 看了三张长图：公式是 KaTeX 字体、`≠` 正常、函数图在；4 张照片都在；T3 除网站小图标空白外与修前一致。
+- 截图：证据目录 `~/Library/Application Support/chatgpt-clipper/evidence/2026-11-02-m1-5-acceptance/`（`answer-T2-修后.png`、`answer-T3-修后.png`、`answer-T4-修后.png`，测试对话内容不私密，仍按规矩不入库）。
+- 发布与回读：无需发布。
+- 与授权不一致之处、遗留问题、范围外发现：① 链接后来源胶囊里的网站小图标来自 google.com，没加权限，长图里仍空白。② 笔记里的图片仍是外链（P5 MD 部分）；交互卡片的笔记仍杂乱（P10 MD 部分）。③ 发现快照老限制：每个元素写死高度，子元素下外边距不能穿过父元素合并，测试页里绕开了，真实页面暂未见影响（记在矩阵末尾）。④ T4 长图 3.6MB（四张照片按原分辨率内嵌后再栅格化）。
+- 本轮新坑：L-07。
 
 ## M1 ⑤ 修代码块笔记 P7、P8（2026-11-02，Claude，用户看过矩阵后选“先修代码块”，修后“已重新收藏”、看过结果后“提交”；已提交、无需发布）
 

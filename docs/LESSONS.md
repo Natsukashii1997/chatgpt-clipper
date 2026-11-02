@@ -76,3 +76,11 @@
 - 正确做法：保留「授权失效 → 退回下载 + 去授权」这条路，不假设授权一直有效；设置页在 `prompt` 状态时给「重新授权」按钮。
 - 证据：证据目录 `2026-11-02-md-vault/`（`3.png` 授权失效卡片、`downloads-listing.txt` 18:20:43 退回下载、`vault-listing.txt` 之后的写入时间）；Chrome 进程启动时间 19:57:52 前后两次写入均成功。
 - 升级：未升级。
+
+## L-07 SVG foreignObject 栅格化时外部图片和网页字体全部丢失（2026-11-02）
+
+- 现象：长图里回答的图片是空白框（只剩说明文字），公式换成系统字体、`≠` 显示成方框，脚本画的 canvas 空白。
+- 根因：SVG 当图片画（`img.src = data:image/svg+xml`）时浏览器不加载任何外部资源，`<img src="https://…">`、`@font-face` 的 url 都不生效；canvas 复制节点只复制标签不复制画面。另外 `images.openai.com` 不给 CORS 头，内容脚本 `fetch` 直接失败。
+- 正确做法：栅格化前把图片、用到且已加载的 `@font-face` 换成 `data:` 地址，canvas 换成 `toDataURL()` 的图片；同源资源内容脚本直接取，跨域图片交给后台按 `host_permissions` 取（只列需要的域名，不用 `<all_urls>`）。测试里用不带 CORS 头的路由模拟跨域图片，Playwright 的 `context.route` 能拦到扩展后台的请求。
+- 证据：`tests/snapshot.test.mjs`「长图里有跨域图片、网页字体、脚本画的 canvas」（改前 14.70% 报红，改后 0.87%）；证据目录 `2026-11-02-m1-5-acceptance/answer-T2-修后.png`、`answer-T4-修后.png`。
+- 升级：已写成测试（同上）。

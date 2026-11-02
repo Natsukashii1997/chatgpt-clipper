@@ -26,6 +26,7 @@ npm run compile                   # 类型检查
 | 权限 | 用途 |
 |---|---|
 | `downloads` | 写不进 Vault 时（没选文件夹、授权失效、写入出错）退回浏览器下载，把笔记和长图存到下载目录的 `chatgpt-clipper/<日期> <标题>/` 子文件夹 |
+| `https://images.openai.com/*`、`https://*.oaiusercontent.com/*` | 长图里画回答中的图片（搜索图、生成图、上传图）。这两个域名不给页面 CORS 头，内容脚本读不到，由后台取回已显示的图片转成内嵌数据；只取图片，不发送任何内容 |
 | 设置页（`options_ui`，不需要权限） | 用 File System Access API 选一次 Vault 里的目标文件夹，目录句柄存在扩展自己的 IndexedDB；授权失效时在这里重新授权 |
 | 内容脚本 `matches: https://chatgpt.com/*` | 只在 ChatGPT 页面上挂「收藏」按钮、读取用户点选的那条回答 |
 

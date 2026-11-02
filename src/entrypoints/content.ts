@@ -2,7 +2,7 @@ import { answerFingerprint, answerKey, answerQuestion, answerTitle, findAnswers 
 import { answerToMarkdown, buildNote } from '@/lib/markdown';
 import type { DownloadFile, FailCode, Request, Response } from '@/lib/messages';
 import { folderName, noteName } from '@/lib/naming';
-import { takeSnapshot, toPng } from '@/lib/snapshot';
+import { embedResources, takeSnapshot, toPng } from '@/lib/snapshot';
 import { mountRibbon, progressCard, STEPS, UI_ATTR, type RibbonState } from '@/lib/ui';
 
 export default defineContentScript({
@@ -72,6 +72,7 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
       card.step(1, 'on');
       await nextFrame();
       try {
+        await embedResources(snap, fetchImage);
         files.push({ name: 'answer.png', url: await blobToDataUrl(await toPng(snap)) });
         card.step(1, 'ok', `${snap.height}px`);
       } catch (e) {
@@ -135,6 +136,13 @@ async function send(msg: Request): Promise<Extract<Response, { ok: true }>> {
   if (!res) throw new Error('后台无响应');
   if (!res.ok) throw new Error(res.error);
   return res;
+}
+
+/** 跨域图片交给后台取（内容脚本受页面 CORS 限制） */
+async function fetchImage(url: string): Promise<string> {
+  const res = (await browser.runtime.sendMessage({ type: 'image', url } satisfies Request)) as Response | undefined;
+  if (!res?.ok || !res.dataUrl) throw new Error(res && !res.ok ? res.error : '图片取不到');
+  return res.dataUrl;
 }
 
 function blobToDataUrl(b: Blob): Promise<string> {
