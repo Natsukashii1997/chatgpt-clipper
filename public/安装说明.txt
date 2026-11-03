@@ -1,6 +1,6 @@
-ChatGPT 回答收藏器 · 安装说明
+AI 回答收藏器 · 安装说明
 
-在 ChatGPT 网页上一键把某条回答存成长图（answer.png）；装了 Obsidian 的话，还能连同 Markdown 笔记一起存进 Vault。
+在 ChatGPT 或 Claude 网页上一键把某条回答存成长图（answer.png）；装了 Obsidian 的话，还能连同 Markdown 笔记一起存进 Vault。
 全部在你自己的电脑上处理，不上传、不收集任何数据。只支持电脑版 Chrome。
 
 一、安装
@@ -8,7 +8,7 @@ ChatGPT 回答收藏器 · 安装说明
 2. 在 Chrome 地址栏打开 chrome://extensions
 3. 打开右上角的「开发者模式」。
 4. 点左上角「加载已解压的扩展程序」，选刚才解压出来、里面有 manifest.json 的那个文件夹。
-5. 打开（或刷新）chatgpt.com，每条回答左侧会有一条淡色的书签丝带，点一下就开始收藏，右下角会弹出进度卡。
+5. 打开（或刷新）chatgpt.com 或 claude.ai，每条回答左侧会有一条淡色的书签丝带，点一下就开始收藏，右下角会弹出进度卡。
 
 二、存到哪里
 - 没装 Obsidian（或者没设置）：长图会下载到 Chrome 的下载目录，在「chatgpt-clipper/日期 标题/」文件夹里。
@@ -17,8 +17,8 @@ ChatGPT 回答收藏器 · 安装说明
   选 Vault 里的一个文件夹。以后每次收藏，长图和笔记都会直接写进这个文件夹。
 
 三、更新
-收到新版 zip 后，解压覆盖原来的文件夹，再到 chrome://extensions 里点本插件的刷新按钮，然后刷新 ChatGPT 页面。
+收到新版 zip 后，解压覆盖原来的文件夹，再到 chrome://extensions 里点本插件的刷新按钮，然后刷新 ChatGPT 或 Claude 页面。
 
 四、常见问题
-- 看不到丝带：确认插件已打开，并刷新 ChatGPT 页面。
+- 看不到丝带：确认插件已打开，并刷新 ChatGPT 或 Claude 页面。
 - Chrome 提示关闭「开发者模式」的扩展程序：这是因为插件不是从应用商店装的，选择保留即可。

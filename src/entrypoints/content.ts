@@ -1,4 +1,4 @@
-import { answerFingerprint, answerKey, answerQuestion, answerTitle, findAnswers } from '@/lib/adapter';
+import { answerFingerprint, answerKey, answerQuestion, answerTitle, findAnswers, NOISE } from '@/lib/adapter';
 import { answerToMarkdown, buildNote, readCodeEditors, type CodeRead } from '@/lib/markdown';
 import type { DownloadFile, FailCode, Request, Response } from '@/lib/messages';
 import { folderName, noteName } from '@/lib/naming';
@@ -6,7 +6,7 @@ import { embedResources, styler, takeSnapshot, toPng } from '@/lib/snapshot';
 import { mountRibbon, progressCard, STEPS, UI_ATTR, type RibbonState } from '@/lib/ui';
 
 export default defineContentScript({
-  matches: ['https://chatgpt.com/*'],
+  matches: ['https://chatgpt.com/*', 'https://claude.ai/*'],
   runAt: 'document_idle',
   main() {
     const scan = () => {
@@ -71,7 +71,7 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
       } finally {
         st.dispose();
       }
-      snap = takeSnapshot(el, { exclude: `[${UI_ATTR}]`, codeLines: new Map([...code].map(([e, c]) => [e, c.lines])) });
+      snap = takeSnapshot(el, { exclude: `[${UI_ATTR}]`, drop: NOISE, codeLines: new Map([...code].map(([e, c]) => [e, c.lines])) });
       card.step(0, 'ok');
     } catch (e) {
       fail(0, '快照', e);

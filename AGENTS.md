@@ -36,7 +36,7 @@ AGENTS.md            入口（本文件）
 CURRENT.md           当前状态与唯一下一步；每轮交接写在顶部
 docs/PRD.md          需求（v2，开发基线）
 docs/
-  recon/             ChatGPT 页面结构侦察记录（截图在证据目录，不入库）
+  recon/             ChatGPT、Claude 页面结构侦察记录（截图在证据目录，不入库）
   reference/gpt-prd-v1/  GPT 起草的 v1 PRD 原文，只作参考，不是需求基线
   agents/            Matt Pocock 技能读的约定：issue 看板、分流标签、领域文档
   LESSONS.md         本项目的坑（排障、改脚本前先搜）

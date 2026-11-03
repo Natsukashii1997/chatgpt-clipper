@@ -1,6 +1,18 @@
 # 当前状态
 
-更新：2026-11-03。M1 ⑤ 验收矩阵 10 类加高清屏全部通过（见 [docs/acceptance/M1-验收矩阵.md](docs/acceptance/M1-验收矩阵.md)）。P9、P15 已在测试页修好、未提交；插件可打成 zip 发给别人，没接 Obsidian 时只下载长图（见下一节）。P9、P15 已修，矩阵已更新；常浩决定不再重收 T1、T6 复验（平时很少收长代码）。唯一下一步：常浩说「提交」再提交。M1 收尾后的下一件事：M2 支持 Claude 网页版（只加 Claude，不做 Codex，2026-11-03 用户决定，见 PRD 第 8 节）。
+更新：2026-11-03。M1 已收尾并提交（`2ee7f58`）。M2 支持 Claude 网页版：做完并在真实页面验收 C1–C6 通过（见 [docs/acceptance/M2-Claude验收.md](docs/acceptance/M2-Claude验收.md)），修了加粗 Q1，已提交。下一步：无待办；未覆盖深色模式、带图片的回答，常浩日常用到再看。
+
+## M2 支持 Claude 网页版（2026-11-03，Claude，用户“只需要 claude”“抓紧开始做 claude 的收藏”“按计划开工”；加 claude.ai 权限、思考过程不收、Artifact 只收卡片、插件改名「AI 回答收藏器」均为用户选定；已提交、无需发布）
+
+- 时间：开工 `2026-11-03 16:40`（M1 提交后），本节写于 `2026-11-03 17:16`。来由：PRD 第 8 节 M2，只加 Claude、不做 Codex。
+- 侦察：常浩建的测试对话 `https://claude.ai/chat/1a834298-9100-4af0-9f87-83d4237a84f0`（C1–C6，不私密），Claude in Chrome 只读脚本读结构，未点击、未碰输入框，滚动后还原，读完关标签页。结论见 [docs/recon/2026-11-03-Claude侦察记录.md](docs/recon/2026-11-03-Claude侦察记录.md)。
+- 改了哪些文件：`src/lib/adapter.ts`（按域名选站点：`SITE`、`ANSWER_SELECTOR`、提问选择器；新增 `NOISE`=Claude 的思考过程行、按钮行、读屏标题；指纹去掉 `NOISE`；`MD` 拆成 ChatGPT 一份、Claude 在其上覆盖：Claude 没有的组件设成匹配不到，加 `artifact`/`artifactTitle`）；`src/lib/markdown.ts`（Artifact 卡片输出一行 `**Artifact：名称**（内容在原对话里）`；frontmatter `source`、`tags` 按站点）；`src/lib/snapshot.ts`（新增 `opts.drop`：去掉占位置的界面，外层高度改 auto 后重新量高）；`src/entrypoints/content.ts`（matches 加 `https://claude.ai/*`，快照传 `drop: NOISE`）；`wxt.config.ts`（显示名「AI 回答收藏器」、说明写 ChatGPT 或 Claude）；`tests/fixtures/claude-answer.html`（照侦察结构仿的一轮问答）；`tests/snapshot.test.mjs`（`describe('Claude 网页版')` 6 个用例）；`public/安装说明.txt`；`docs/PRD.md`（M2 决定）；`AGENTS.md`（recon 说明）。
+- 测试：`node --test tests/*.test.mjs` 原样结果 `ℹ pass 27` / `ℹ fail 0`；`npm run compile` 无报错；`node scripts/check-rules.mjs` 通过。反向验证各自报红：长图不去掉界面（2 个失败）、指纹不去掉界面（卸载再装回用例失败）、笔记不跳过界面（2 个失败）、不认 Artifact 卡片（2 个失败）。测试页行高要用整数，否则回答落在半像素上，逐像素对比多出约 1% 抗锯齿差异。
+- 验证：测试页；真实页面 2026-11-03 17:29 常浩收藏 C1–C6，Claude 逐条看了 Vault 里的长图和笔记，发现笔记丢加粗（Claude 的 strong 字重 501，Q1），已修：`markdown.ts` 里 strong/b 比父元素重就算加粗，测试页 strong 改 501（不修时笔记用例报红），修后 `ℹ pass 27` / `ℹ fail 0`。已重新 `npm run zip`。
+- 截图：无入库截图。
+- 发布与回读：无需发布。
+- 与授权不一致之处、遗留问题、范围外发现：Claude 笔记的标签用 `claude收藏`（ChatGPT 仍是 `chatgpt收藏`），是 Claude 按站点推的默认，常浩没明确说。未覆盖：深色模式、带图片的回答（图片域名未知，可能要加 host_permissions）、生成中的回答、真实长对话里行卸载后丝带重挂（测试页模拟过）。`naming.ts` 标题为空时的兜底名仍是「ChatGPT 回答」（实际总有提问兜底，未改）。
+- 本轮新坑：无。
 
 ## M1 ⑤ 修完 P9、P15；打包发给别人、没接 Obsidian 只下载长图（2026-11-03，Claude，用户“按计划开工”；打包选 zip + 安装说明、没接 Obsidian「只下长图」、P9/P15「现在就开始，一起打包」、进度卡「就原来进度卡的形式，补上这种情况」；未提交、无需发布）
 

@@ -1,7 +1,7 @@
 // 快照模块的端到端测试：Playwright 启动带插件的 Chromium，把固定测试页伪装成 chatgpt.com 打开，
 // 点「收藏」，检查下载下来的 PNG。测试页内容是编的（tests/fixtures/card-answer.html）。
 // 需要 Playwright 自带的 Chromium（正式版 Chrome 不支持命令行加载未打包插件）：npx playwright install chromium
-import { test, before, after } from 'node:test';
+import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -13,6 +13,8 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const EXT = path.join(ROOT, '.output/chrome-mv3');
 const FIXTURE = fs.readFileSync(path.join(ROOT, 'tests/fixtures/card-answer.html'), 'utf8');
 const URL = 'https://chatgpt.com/c/fixture';
+const CLAUDE_FIXTURE = fs.readFileSync(path.join(ROOT, 'tests/fixtures/claude-answer.html'), 'utf8');
+const CLAUDE_URL = 'https://claude.ai/chat/fixture';
 // 第十节的外部资源：字体与页面同源；图片跨域且不带 CORS 头，和真实页面的 images.openai.com 一样内容脚本读不到
 const FONT_URL = 'https://chatgpt.com/cdn/assets/TestFont.ttf', FONT = fs.readFileSync('/System/Library/Fonts/Supplemental/Zapfino.ttf');
 const IMAGE_URL = 'https://images.openai.com/fixture/bridge.svg';
@@ -38,6 +40,7 @@ before(async () => {
   await ctx.route('**/*', route => {
     const url = route.request().url();
     if (url.startsWith(URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: FIXTURE });
+    if (url.startsWith(CLAUDE_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: CLAUDE_FIXTURE });
     if (url === FONT_URL) return route.fulfill({ contentType: 'font/ttf', body: FONT });
     if (url === IMAGE_URL) return route.fulfill({ contentType: 'image/svg+xml', body: IMAGE });
     return route.abort();
@@ -354,7 +357,6 @@ test('正文：回答里看得见的文字全部保留（FR-4）', async () => {
   });
   assert.ok(texts.length > 100, `只取到 ${texts.length} 段文字`);
   const missing = texts.filter(t => !m.includes(t));
-  if (process.env.DUMP_MD) fs.writeFileSync(process.env.DUMP_MD, md());
   assert.deepEqual(missing, []);
 });
 
@@ -367,3 +369,94 @@ test('回答没有标题时用提问当标题，最多 30 字（M1 验收 P12）
   assert.match(card, /\n简短一点\n/);
   assert.doesNotMatch(card, /简版：/);
 });
+
+// Claude 网页版（M2）：tests/fixtures/claude-answer.html 照真实页面结构仿的一轮问答
+describe('Claude 网页版', () => {
+  const MSG = '[data-testid="assistant-message"]';
+  const NOISE = '[data-cds="TurnStatus"], :has(> [data-testid="message-actions"])';
+  let cp, c;
+
+  before(async () => {
+    const sw = ctx.serviceWorkers()[0];
+    // 前面 ChatGPT 的用例会在测试文件夹里留下收藏，先清空
+    await sw.evaluate(async () => {
+      const root = await navigator.storage.getDirectory();
+      for await (const [n] of root.entries()) await root.removeEntry(n, { recursive: true });
+    });
+    await setVault(sw);
+    cp = await ctx.newPage();
+    await cp.goto(CLAUDE_URL);
+    await cp.locator(`${MSG} clipper-ribbon`).waitFor({ state: 'attached' });
+    await cp.evaluate(() => document.fonts.ready);
+    // 基准：浏览器里把思考过程行、按钮行藏起来后的回答
+    await cp.addStyleTag({ content: `${NOISE}{display:none!important}`, });
+    const box = await cp.locator(MSG).boundingBox();
+    const baseline = await cp.locator(MSG).screenshot();
+    await cp.evaluate(() => document.querySelector('style:last-of-type').remove());
+    const full = await cp.locator(MSG).boundingBox();
+    await cp.locator(`${MSG} clipper-ribbon button`).click();
+    await cp.locator('clipper-dock .card.ok, clipper-dock .card.bad').waitFor({ timeout: 30_000 });
+    const card = await cp.locator('clipper-dock .card').innerText();
+    const files = await sw.evaluate(async () => {
+      const out = {};
+      for await (const [, h] of (await navigator.storage.getDirectory()).entries())
+        for await (const [f, fh] of h.entries()) {
+          const file = await fh.getFile();
+          out[f.endsWith('.md') ? 'note' : f] = f.endsWith('.md') ? await file.text() : [...new Uint8Array(await file.arrayBuffer())];
+        }
+      return out;
+    });
+    c = { box, full, baseline, card, note: files.note, png: Buffer.from(files['answer.png'] ?? []) };
+  });
+
+  test('丝带挂在 Claude 的回答上，收藏后写进 Vault', () => {
+    assert.match(c.card, /^已收藏\n/, c.card);
+    assert.match(c.card, /📁\s+快速排序示例\n/);
+  });
+
+  test('长图不画思考过程行和按钮行：宽同回答，高 = 去掉它们之后的回答高度', () => {
+    const w = c.png.readUInt32BE(16), h = c.png.readUInt32BE(20);
+    assert.equal(w, Math.round(c.box.width));
+    assert.ok(c.full.height - c.box.height > 50, '测试页里思考过程行和按钮行该占位置');
+    assert.ok(Math.abs(h - c.box.height) <= 1, `长图高 ${h}，应为 ${c.box.height}（原回答 ${c.full.height}）`);
+  });
+
+  test('长图与浏览器真实渲染逐像素比，只差抗锯齿（Artifact 卡片、代码、公式、表格都在）', async () => {
+    const { ratio, sizes } = await pixelDiff(c.png, c.baseline);
+    assert.ok(ratio < MAX_DIFF_RATIO, `不同像素占 ${(ratio * 100).toFixed(2)}%，尺寸 ${sizes}`);
+  });
+
+  test('笔记：来源 claude，提问取自用户消息，正文按 Markdown 结构输出', () => {
+    const n = c.note;
+    assert.match(n, /^---\nsource: claude\nurl: https:\/\/claude\.ai\/chat\/fixture\n/);
+    assert.match(n, /\ntags: \[claude收藏\]\n/);
+    assert.match(n, /> \[!question\]- 提问\n> 用 Python 写一个快速排序，再给一张表和公式。\n/);
+    assert.match(n, /\n## 快速排序示例\n/);
+    assert.match(n, /\n\*\*Artifact：番茄钟\*\*（内容在原对话里）\n/);
+    assert.match(n, /下面是\*\*带注释\*\*的版本，调用 `quick_sort\(data\)` 即可，详见 \[Python 文档\]\(https:\/\/docs\.python\.org\/3\/\)。/);
+    assert.match(n, /\n```python\ndef quick_sort\(a\):\n    # 少于两个元素就已经有序\n[\s\S]*?\+ quick_sort\(\[x for x in rest if x >= pivot\]\)\n```\n/);
+    assert.match(n, /判别式 \$\\Delta = b\^2-4ac\$ 决定根的个数：/);
+    assert.match(n, /\n\$\$\nx=\\frac\{-b\\pm\\sqrt\{\\Delta\}\}\{2a\}\n\$\$\n/);
+    assert.match(n, /\n\| 大于 0 \| 两个不等实根 \| — \|\n/);
+    assert.match(n, /\n1\. \*\*排序\*\*：先分区再递归。\n2\. 复杂度平均 O\(n log n\)。\n?$/);
+  });
+
+  test('笔记不收思考过程、按钮、时间、读屏标题、代码块的语言名和 Artifact 的分享按钮', () => {
+    for (const s of ['正在为零基础用户', 'just now', '重试', 'Claude responded', 'You said', '分享', 'Only you', '复制'])
+      assert.ok(!c.note.includes(s), `笔记里不该有「${s}」`);
+    assert.doesNotMatch(c.note, /^python$/m);
+  });
+
+  test('对话行被卸载再装回（Claude 只渲染屏幕附近的行）、底部时间变了：丝带重新挂上，仍认得是收藏过的', async () => {
+    await cp.evaluate(sel => {
+      const row = document.querySelector(sel).closest('[data-testid="transcript-row"]'), parent = row.parentElement;
+      row.remove();
+      const again = row.cloneNode(true);
+      again.querySelector('clipper-ribbon')?.remove();
+      again.querySelector('time').textContent = '5 minutes ago';
+      setTimeout(() => parent.append(again), 200);
+    }, MSG);
+    await cp.locator(`${MSG} clipper-ribbon button.rib.done`).waitFor({ timeout: 5_000 });
+  });
+});
+

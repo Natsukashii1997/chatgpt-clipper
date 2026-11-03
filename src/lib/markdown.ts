@@ -1,6 +1,6 @@
 // 回答 DOM → Markdown 笔记（FR-4、FR-6）。对页面上活的回答节点跑：可见与否、加粗要看计算样式。
 // 规则依据 docs/recon/2026-11-02-回答结构-转MD.md；页面标记只从 adapter 取。
-import { MD } from './adapter';
+import { MD, SITE } from './adapter';
 import { beijingTime } from './naming';
 
 const BLOCK = new Set(['P', 'DIV', 'SECTION', 'ARTICLE', 'MAIN', 'HEADER', 'FOOTER', 'ASIDE', 'NAV', 'FIGURE', 'FIGCAPTION',
@@ -36,6 +36,8 @@ export function answerToMarkdown(answer: HTMLElement, opts: { exclude?: string; 
     if (src) return [src.getAttribute(MD.sourceAttr)!.trim()];
     if (el.matches(MD.codeBlock)) return [codeBlock(el, opts.code)];
     if (el.matches(MD.learning)) return learning(el);
+    // Artifact 只收卡片名，内容要点开侧栏才加载（用户 2026-11-03 定）
+    if (el.matches(MD.artifact)) return [`**Artifact：${clean(el.querySelector(MD.artifactTitle)?.textContent ?? '')}**（内容在原对话里）`];
     if (el.matches(MD.katexDisplay)) return [`$$\n${tex(el)}\n$$`];
     const tag = el.tagName;
     if (/^H[1-6]$/.test(tag)) {
@@ -160,7 +162,9 @@ export function answerToMarkdown(answer: HTMLElement, opts: { exclude?: string; 
       const t = clean(inner);
       return t ? `[${t}](${(el as HTMLAnchorElement).href})` : '';
     }
-    if (weight(el) >= 600 && weight(el.parentElement) < 600) return wrap(inner, '**');
+    // 加粗按计算样式（ChatGPT 的卡片用 span 加粗）；Claude 的 strong 是可变字体的 501，按标签认
+    const strong = /^(STRONG|B)$/.test(el.tagName) && weight(el) > weight(el.parentElement);
+    if ((weight(el) >= 600 || strong) && weight(el.parentElement) < 600) return wrap(inner, '**');
     if (/^(EM|I)$/.test(el.tagName)) return wrap(inner, '*');
     if (/^(DEL|S)$/.test(el.tagName)) return wrap(inner, '~~');
     return inner;
@@ -227,8 +231,8 @@ export async function readCodeEditors(answer: Element, copyLine?: (line: Element
 /** 整篇笔记：frontmatter + 折叠的提问 + 长图 + 正文（PRD 第 2 节模板） */
 export function buildNote(n: { url: string; captured: Date; title: string; question: string; body: string; image: boolean }): string {
   const { date, time } = beijingTime(n.captured);
-  const front = ['---', 'source: chatgpt', `url: ${n.url}`, `captured: ${date} ${time}`, `title: ${JSON.stringify(n.title)}`,
-    'tags: [chatgpt收藏]', '---'].join('\n');
+  const front = ['---', `source: ${SITE}`, `url: ${n.url}`, `captured: ${date} ${time}`, `title: ${JSON.stringify(n.title)}`,
+    `tags: [${SITE}收藏]`, '---'].join('\n');
   const quote = (n.question || '（没找到提问）').split('\n').map(l => (l.trim() ? `> ${l}` : '>')).join('\n');
   return [front, `> [!question]- 提问\n${quote}`, n.image ? '![[answer.png]]' : '', n.body].filter(Boolean).join('\n\n') + '\n';
 }

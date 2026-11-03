@@ -22,6 +22,8 @@ export interface SnapshotOptions {
   exclude?: string;
   /** 长代码编辑器 → 读全时复制下来的每一行（已写好样式），换掉副本里只渲染了一部分的行（M1 验收 P9） */
   codeLines?: Map<Element, HTMLElement[]>;
+  /** 要去掉、又占位置的界面（Claude 的思考过程行、按钮行）：去掉后按剩下的内容重新量高 */
+  drop?: string;
 }
 
 /** 写样式的工具：比较时用的浏览器默认样式放在一个临时 iframe 里，用完 dispose */
@@ -86,15 +88,17 @@ export function takeSnapshot(el: HTMLElement, opts: SnapshotOptions = {}): Snaps
     });
     if (opts.exclude) clone.querySelectorAll(opts.exclude).forEach(n => n.remove());
     clean(clone);
-    // 代码框展开后变高：它外面各层写死的高度改成随内容；网格的行高在计算样式里也是写死的 px（真实页面代码框外有一层网格）
-    for (const pane of expand)
-      for (let a = pane.parentElement; a; a = a.parentElement) {
+    // 代码框展开后变高、去掉界面后变矮：外面各层写死的高度改成随内容；网格的行高在计算样式里也是写死的 px（真实页面代码框外有一层网格）
+    const loose = expand.map(p => p.parentElement);
+    if (opts.drop) clone.querySelectorAll(opts.drop).forEach(n => { loose.push(n.parentElement); n.remove(); });
+    for (const start of loose)
+      for (let a = start; a; a = a.parentElement) {
         a.style.setProperty('height', 'auto');
         if (/grid/.test(a.style.display)) a.style.setProperty('grid-template-rows', 'none');
       }
 
     const r = el.getBoundingClientRect(), width = Math.round(r.width);
-    const height = expand.length ? measure(clone, width) : Math.round(r.height);
+    const height = loose.length ? measure(clone, width) : Math.round(r.height);
     const root = document.createElement('div');
     root.setAttribute('style', `width:${width}px;height:${height}px;overflow:hidden;background:${pageBackground()}`);
     root.appendChild(clone);

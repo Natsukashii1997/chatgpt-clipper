@@ -1,8 +1,17 @@
-// ChatGPT 页面适配：所有选择器只在这里。只用稳定的数据属性，不依赖带哈希后缀的类名（docs/recon/2026-11-02-侦察记录.md）。
-// ChatGPT 改版时只改这个文件。
+// 页面适配：所有选择器只在这里。只用稳定的数据属性，不依赖带哈希后缀的类名。站点改版时只改这个文件。
+// ChatGPT：docs/recon/2026-11-02-侦察记录.md；Claude 网页版（M2）：docs/recon/2026-11-03-Claude侦察记录.md。按域名选一次。
+const CLAUDE = location.hostname === 'claude.ai';
+/** 写进笔记 frontmatter 的来源 */
+export const SITE = CLAUDE ? 'claude' : 'chatgpt';
+/** 匹配不到任何元素：某站没有的那类内容 */
+const NONE = ':not(*)';
 
-/** 每条助手回答：data-chatgpt-search-unit-key="fallback-turn-N:K:assistant" */
-export const ANSWER_SELECTOR = '[data-chatgpt-search-unit-key$=":assistant"]';
+/** 每条助手回答。ChatGPT：data-chatgpt-search-unit-key="fallback-turn-N:K:assistant"；Claude：整块回答（Artifact 卡片在正文 Prose 外面） */
+export const ANSWER_SELECTOR = CLAUDE ? '[data-testid="assistant-message"]' : '[data-chatgpt-search-unit-key$=":assistant"]';
+const USER_SELECTOR = CLAUDE ? '[data-testid="user-message"]' : '[data-chatgpt-search-unit-key$=":user"]';
+/** 回答里不属于正文、又占位置的界面：Claude 的思考过程（含联网搜索过程）那一行（用户 2026-11-03 定不收）、底部按钮和时间、读屏标题。
+ *  长图、笔记、指纹都不要；长图去掉后按剩下的内容重新量高 */
+export const NOISE = CLAUDE ? '[data-cds="TurnStatus"], :has(> [data-testid="message-actions"]), h3[data-find-omitted]' : '';
 
 /** 给收藏起名：回答里的标题；没有标题时由调用方改用提问（用户 2026-11-02 定，M1 验收 P12） */
 const TITLE_SELECTORS = ['h1, h2, h3, h4, h5, h6'];
@@ -14,7 +23,7 @@ export function findAnswers(root: ParentNode = document): HTMLElement[] {
 }
 
 export function answerKey(el: HTMLElement): string {
-  return el.dataset.chatgptSearchUnitKey ?? '';
+  return el.dataset.chatgptSearchUnitKey ?? el.dataset.turnKey ?? '';
 }
 
 /** 回答的标题：第一个看得见的标题，没有就返回空。跳过「ChatGPT 说：」这类读屏专用的隐藏标题 */
@@ -34,6 +43,8 @@ export function answerTitle(el: HTMLElement): string {
 export async function answerFingerprint(el: HTMLElement): Promise<string> {
   const copy = el.cloneNode(true) as HTMLElement;
   copy.querySelectorAll(`${MD.codeBlock} ${MD.codeEditor}`).forEach(n => n.remove());
+  // Claude 底部的「just now」这类时间会变
+  if (NOISE) copy.querySelectorAll(NOISE).forEach(n => n.remove());
   const text = `${location.origin}${location.pathname}\n${(copy.textContent ?? '').replace(/\s+/g, ' ').trim()}`;
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2, '0')).join('');
@@ -41,7 +52,7 @@ export async function answerFingerprint(el: HTMLElement): Promise<string> {
 
 /** 提问原文：回答前面最近的那条 `:user` 消息（真实页面同一轮，测试页跨轮，见 docs/recon/2026-11-02-回答结构-转MD.md） */
 export function answerQuestion(el: HTMLElement): string {
-  const users = [...document.querySelectorAll<HTMLElement>('[data-chatgpt-search-unit-key$=":user"]')]
+  const users = [...document.querySelectorAll<HTMLElement>(USER_SELECTOR)]
     .filter(u => u.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
   const u = users.at(-1);
   if (!u) return '';
@@ -50,8 +61,8 @@ export function answerQuestion(el: HTMLElement): string {
   return (copy.textContent ?? '').trim();
 }
 
-/** 转 Markdown 用到的页面标记（DIL 组件看 data-d-component，见 docs/recon/2026-11-02-回答结构-转MD.md） */
-export const MD = {
+/** 转 Markdown 用到的页面标记（ChatGPT 的 DIL 组件看 data-d-component，见 docs/recon/2026-11-02-回答结构-转MD.md） */
+const CHATGPT_MD = {
   /** 读屏专用标题、ChatGPT 复制时排除的元素 */
   skip: '[data-conversation-role], [data-markdown-copy="exclude"], [data-d-component="favicon"]',
   /** 文档块（writing block）和它自带的 Markdown 原文 */
@@ -72,6 +83,9 @@ export const MD = {
   katex: '.katex',
   katexDisplay: '.katex-display',
   tex: 'annotation[encoding="application/x-tex"]',
+  /** Artifact 卡片和它的标题（只 Claude 有；只收卡片名，不收内容，用户 2026-11-03 定） */
+  artifact: NONE,
+  artifactTitle: NONE,
   /** 代码块语言：pre > code.language-xxx */
   codeLang: (code: Element | null) => code?.className.match(/language-([\w+#-]+)/)?.[1] ?? '',
   /** ChatGPT 自己的代码块（M1 验收 T1 实测）：块头在 exclude 里（图标 + 语言名 + 按钮）；
@@ -87,3 +101,13 @@ export const MD = {
     return (label?.textContent ?? '').trim().toLowerCase().replace(/\s+/g, '-');
   },
 };
+
+/** Claude 的回答基本是标准 HTML：代码块是普通 pre > code.language-*，公式同样是 KaTeX；没有 DIL 组件、文档块、来源胶囊、代码编辑器 */
+export const MD: typeof CHATGPT_MD = CLAUDE ? {
+  ...CHATGPT_MD,
+  /** 读屏标题、思考过程行、按钮行；代码块的语言名和复制按钮（语言看 code 的类） */
+  skip: `${NOISE}, [role="group"] > [data-find-omitted], [data-testid="code-block-copy"]`,
+  widget: NONE, pressable: NONE, citation: NONE, learning: NONE, codeBlock: NONE, codeEditor: NONE,
+  artifact: '[data-cds="Card"][data-file-row-card]',
+  artifactTitle: '[data-testid="frame-card-open"]',
+} : CHATGPT_MD;
