@@ -53,7 +53,11 @@ before(async () => {
   const baseline = await answer.screenshot();   // 浏览器真实渲染，作对比基准；先截，免得截进进度卡
   const ribbon = await page.locator(`${ANSWER} clipper-ribbon button`).boundingBox();
   const clip = await page.locator('.clip').boundingBox();
-  const media = await page.locator('#media').boundingBox();
+  // 第十节相对回答左上角的位置：同一时刻量（截基准图会滚动页面，分开取的 boundingBox 坐标对不上）
+  const media = await page.locator('#media').evaluate((m, sel) => {
+    const a = document.querySelector(sel).getBoundingClientRect(), r = m.getBoundingClientRect();
+    return { x: r.left - a.left, y: r.top - a.top, width: r.width, height: r.height };
+  }, ANSWER);
   await page.locator(`${ANSWER} clipper-ribbon button`).click();
   await page.locator('clipper-dock .card.ok, clipper-dock .card.bad').waitFor({ timeout: 30_000 });
   const card = await page.locator('clipper-dock .card').innerText();
@@ -235,8 +239,7 @@ test('PNG 与浏览器真实渲染逐像素比，只差抗锯齿', async () => {
 });
 
 test('长图里有跨域图片、网页字体、脚本画的 canvas（M1 验收 P4、P5、P10）', async () => {
-  const { media, box } = result;
-  const stat = await pixelDiff(png(), result.baseline, { x: media.x - box.x, y: media.y - box.y, width: media.width, height: media.height });
+  const stat = await pixelDiff(png(), result.baseline, result.media);
   console.log(`  第十节差异像素 ${(stat.ratio * 100).toFixed(2)}%`);
   assert.ok(stat.ratio < MAX_DIFF_RATIO, `第十节差异像素 ${(stat.ratio * 100).toFixed(2)}% 超过 ${MAX_DIFF_RATIO * 100}%：图片、字体或 canvas 没进长图`);
 });
@@ -258,6 +261,8 @@ test('正文：标题、卡片、列表、表格、代码、公式、链接、�
   has('[一个外部链接](https://example.com/doc)和`行内代码`');
   // 卡片里的小标题（只有一段加粗字的段落）：后面的段落缩进到它下面，直到下一个小标题（M1 验收 P1，真实页面实测结构）
   has('- **示例卡片**\n  - 卡片开头的说明。\n  - **1. 小标题甲**\n    - 甲的正文。\n  - **2. 小标题乙**\n    - 乙的正文第一段。\n    - 乙的正文第二段。\n    - **内部已知**\n      - 乙下面的小卡片。\n');
+  // 文件卡片（S3 真实结构）：开头的「图标 + 标题 + 说明」当卡片标题；同一行右侧的短标签放括号里；整行只有按钮的不要
+  has('- **模板包 · 第一版**\n  - 示例技能 · 2 个文件\n  - 配置草案\n  - **SKILL.md**（主文件）\n    - 角色与规则\n  - **README.md**\n    - 接入说明\n\n');
   has('- **流程起点**\n  - 识别场景与目标\n  - **子步骤**\n    - 拆成三件事');
   // 流程图外框没有自己的标题：各步平铺，不缩进到第一步下面
   has('- 拆成三件事\n\n- **流程第一步**\n  - 第一步的说明\n\n- **流程第二步**\n  - 第二步的说明\n\n- **分支甲**\n  - 甲的说明\n- **分支乙**\n  - 乙的说明\n\n- **流程收尾**\n  - 收尾的说明\n\n');
@@ -280,7 +285,7 @@ test('正文：标题、卡片、列表、表格、代码、公式、链接、�
   has('> 引用的一句话。');
   has('详见 周报模板.xlsx，按模板填写。');
   has('---\n\n# 周报模板\n\n- 本周完成\n- 下周计划');
-  for (const bad of ['ChatGPT 说：', '打开文件', '复制代码', '文档\n', 'E=mc²', '⧉', '简短一点', '简版', '提供反馈', '1.0', 'favicons'])
+  for (const bad of ['ChatGPT 说：', '打开文件', '复制代码', '文档\n', 'E=mc²', '⧉', '简短一点', '简版', '提供反馈', '1.0', 'favicons', '下载模板包', '- - '])
     assert.ok(!m.includes(bad), `笔记里不该有：${bad}`);
 });
 
@@ -291,7 +296,8 @@ test('正文：回答里看得见的文字全部保留（FR-4）', async () => {
     const out = [], walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     for (let n; (n = walker.nextNode());) {
       const p = n.parentElement, t = n.textContent.replace(/\s+/g, ' ').trim();
-      if (!t || p.closest('clipper-ribbon, [data-conversation-role], .katex, [data-client-defined-widget] header, button, [data-markdown-copy="exclude"]')) continue;
+      // 例外：整行只有按钮的文件卡片底栏（行内的 pressable）不进笔记
+      if (!t || p.closest('clipper-ribbon, [data-conversation-role], .katex, [data-client-defined-widget] header, button, [data-markdown-copy="exclude"], [data-d-component="row"] [data-d-component="pressable"]')) continue;
       if (!p.checkVisibility({ visibilityProperty: true })) continue;
       out.push(t);
     }

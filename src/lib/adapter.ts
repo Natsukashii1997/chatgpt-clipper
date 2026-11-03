@@ -60,6 +60,8 @@ export const MD = {
   /** DIL 组件名：卡片网格、网格项、容器、横排 */
   component: (el: Element) => (el as HTMLElement).dataset?.dComponent ?? '',
   hasBorder: (el: Element) => (el as HTMLElement).dataset?.dHasBorder !== undefined,
+  /** 文件引用、文件卡片底下的按钮（下载、查看）：可点的文字，没有 href */
+  pressable: '[data-d-component="pressable"]',
   /** 链接后的来源胶囊：弹出层触发器里带网站小图标（favicon 已在 skip 里），只留站名（M1 验收 T3） */
   citation: '[data-d-component="popover-trigger"]:has([data-d-component="favicon"])',
   /** 交互公式卡片（learning_block，M1 验收 T2）：主公式、示例结果各一行；滑块、函数图、按钮不要 */

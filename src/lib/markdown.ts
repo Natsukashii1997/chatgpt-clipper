@@ -62,7 +62,15 @@ export function answerToMarkdown(answer: HTMLElement, opts: { exclude?: string; 
       return bs;
     }
     if (comp === 'row') {
+      // 整行只有可点的文字（文件卡片底下的「下载」「查看」按钮），没有链接，不进笔记（S3 实测）
+      if (onlyPressable(el)) return [];
       const bs = blocks(el);
+      // 左边一个小卡片、右边几个短标签（如「主文件」）：标签放括号里接在小卡片标题后面
+      const [first, ...tags] = bs;
+      if (first && isItem(first) && tags.length && tags.every(t => !t.includes('\n') && t.length <= 20)) {
+        const [head, ...rest] = first.split('\n');
+        return [[`${head}（${tags.join(' ')}）`, ...rest].join('\n')];
+      }
       return bs.every(b => !b.includes('\n')) ? nonEmpty(bs.join(' ')) : bs;
     }
     return blocks(el);
@@ -80,7 +88,26 @@ export function answerToMarkdown(answer: HTMLElement, opts: { exclude?: string; 
     let inner = el;
     // grid-item 里只包着一个带边框的 box：拆掉这一层，免得同一张卡片缩进两次
     for (let only = sole(inner); only && ['box', 'grid-item'].includes(MD.component(only)); only = sole(inner)) inner = only;
-    return item('- ', underSubtitles(blocks(inner)), true);
+    const bs = underSubtitles(blocks(inner));
+    // 开头那块本身已是一个小卡片（图标 + 标题 + 说明，S3 文件卡片）：拆掉它的列表标记，它的标题就是这张卡片的标题
+    if (bs[0] && isItem(bs[0])) bs[0] = bs[0].slice(2).split('\n').map(l => l.replace(/^ {2}/, '')).join('\n');
+    return item('- ', bs, true);
+  }
+
+  /** 整块只有可点的文字：每段看得见的字都在 pressable 里 */
+  function onlyPressable(el: Element): boolean {
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let any = false;
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      if (!n.textContent!.trim() || [...ancestors(n.parentElement!, el)].some(skip)) continue;
+      if (!n.parentElement!.closest(MD.pressable)) return false;
+      any = true;
+    }
+    return any;
+  }
+
+  function* ancestors(e: Element, stop: Element) {
+    for (let x: Element | null = e; x && x !== stop; x = x.parentElement) yield x;
   }
 
   /** 容器：DIL 的 box / grid、列表、表格 */
@@ -266,6 +293,11 @@ function item(marker: string, bs: string[], titled = false): string {
   const lines = [marker + ind(titled && rest.length ? asTitle(first!) : first!)];
   for (const b of rest) lines.push(pad + ind(titled && !isList(b) ? `- ${b.split('\n').join('\n  ')}` : b));
   return lines.join('\n');
+}
+
+/** 一个列表项（可带缩进的子行），不是并列的几项 */
+function isItem(b: string): boolean {
+  return /^(- |\d+\. )/.test(b) && b.split('\n').slice(1).every(l => /^ {2}/.test(l));
 }
 
 function asTitle(b: string): string {
