@@ -80,7 +80,7 @@ export function answerToMarkdown(answer: HTMLElement, opts: { exclude?: string; 
     let inner = el;
     // grid-item 里只包着一个带边框的 box：拆掉这一层，免得同一张卡片缩进两次
     for (let only = sole(inner); only && ['box', 'grid-item'].includes(MD.component(only)); only = sole(inner)) inner = only;
-    return item('- ', blocks(inner), true);
+    return item('- ', underSubtitles(blocks(inner)), true);
   }
 
   /** 容器：DIL 的 box / grid、列表、表格 */
@@ -242,6 +242,18 @@ const weight = (el: Element | null) => (el ? Number.parseInt(getComputedStyle(el
 function wrap(inner: string, mark: string): string {
   const m = inner.match(/^(\s*)([\s\S]*?)(\s*)$/)!;
   return m[2] ? `${m[1]}${mark}${m[2]}${mark}${m[3]}` : inner;
+}
+
+/** 卡片里的小标题（整块只是一段加粗短字，M1 验收 P1）：后面的块收到它下面，直到下一个小标题；第一块是卡片标题，不动 */
+function underSubtitles(bs: string[]): string[] {
+  const out: string[] = [];
+  let sub = -1;
+  bs.forEach((b, i) => {
+    if (i > 0 && /^\*\*[^*\n]+\*\*$/.test(b) && b.length <= 64) { sub = out.push(b) - 1; return; }
+    if (sub < 0) { out.push(b); return; }
+    out[sub] += `\n${/^(- |\d+\. )/.test(b) ? b : `- ${b.split('\n').join('\n  ')}`}`;
+  });
+  return out;
 }
 
 /** 列表项：后续各块缩进到标记之后；titled 时第一块当小标题、其余转成子列表 */
