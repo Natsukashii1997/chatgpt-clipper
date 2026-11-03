@@ -53,10 +53,15 @@ before(async () => {
   const baseline = await answer.screenshot();   // 浏览器真实渲染，作对比基准；先截，免得截进进度卡
   const ribbon = await page.locator(`${ANSWER} clipper-ribbon button`).boundingBox();
   const clip = await page.locator('.clip').boundingBox();
-  // 第十节相对回答左上角的位置：同一时刻量（截基准图会滚动页面，分开取的 boundingBox 坐标对不上）
-  const media = await page.locator('#media').evaluate((m, sel) => {
-    const a = document.querySelector(sel).getBoundingClientRect(), r = m.getBoundingClientRect();
-    return { x: r.left - a.left, y: r.top - a.top, width: r.width, height: r.height };
+  // 各块相对回答左上角的位置：同一时刻量（截基准图会滚动页面，分开取的 boundingBox 坐标对不上，L-11）。
+  // panes：代码块里能纵向滚动的代码框，长图里要展开，extra 是展开后多出的高度（M1 验收 P9）
+  const geo = await page.evaluate(sel => {
+    const a = document.querySelector(sel).getBoundingClientRect();
+    const rel = e => { const r = e.getBoundingClientRect(); return { x: r.left - a.left, y: r.top - a.top, width: r.width, height: r.height }; };
+    const panes = [...document.querySelectorAll(`${sel} [data-markdown-copy="code-block"] *`)]
+      .filter(e => /auto|scroll/.test(getComputedStyle(e).overflowY) && e.scrollHeight > e.clientHeight)
+      .map(e => ({ ...rel(e), extra: e.scrollHeight - e.clientHeight }));
+    return { media: rel(document.getElementById('media')), wide: rel(document.getElementById('wide')), panes };
   }, ANSWER);
   await page.locator(`${ANSWER} clipper-ribbon button`).click();
   await page.locator('clipper-dock .card.ok, clipper-dock .card.bad').waitFor({ timeout: 30_000 });
@@ -66,35 +71,32 @@ before(async () => {
   let items = [];
   for (let i = 0; i < 50; i++) {
     items = await sw.evaluate(() => chrome.downloads.search({}));
-    if (items.length >= 2 && items.every(d => d.state === 'complete')) break;
+    if (items.length >= 1 && items.every(d => d.state === 'complete')) break;
     await new Promise(r => setTimeout(r, 200));
   }
-  result = { box, baseline, card, items, ribbon, clip, media };
+  // 没选文件夹时只下载长图：笔记从测试文件夹里读——设好再收藏一次，读完清掉文件夹和收藏记录，不影响后面的用例
+  await setVault(sw);
+  await page.locator(`${ANSWER} clipper-ribbon button`).click();
+  await page.locator('clipper-dock .card.ok, clipper-dock .card.bad').nth(1).waitFor({ timeout: 30_000 });
+  const note = await sw.evaluate(async () => {
+    const root = await navigator.storage.getDirectory();
+    let text = '';
+    for await (const [, h] of root.entries())
+      for await (const [f, fh] of h.entries()) if (f.endsWith('.md')) text = await (await fh.getFile()).text();
+    for await (const [n] of root.entries()) await root.removeEntry(n, { recursive: true });
+    await new Promise((resolve, reject) => {
+      const open = indexedDB.open('chatgpt-clipper', 1);
+      open.onsuccess = () => { const tx = open.result.transaction('kv', 'readwrite'); tx.objectStore('kv').clear(); tx.oncomplete = resolve; tx.onerror = reject; };
+      open.onerror = reject;
+    });
+    return text;
+  });
+  await page.locator('clipper-dock .card').evaluateAll(cs => cs.forEach(c => c.remove()));
+  result = { box, baseline, card, items, ribbon, clip, geo, note };
 });
 
-after(async () => {
-  await ctx?.close();
-  if (dir) fs.rmSync(dir, { recursive: true, force: true });
-});
-
-// Playwright 把下载的文件改成随机名，按数据类型找
-const file = type => fs.readFileSync(result.items.find(d => d.url.startsWith(`data:${type}`)).filename);
-const png = () => file('image/png');
-const md = () => file('text/markdown').toString('utf8');
-
-test('没选 Vault 文件夹时退回浏览器下载，说明原因并给「去设置」', () => {
-  assert.match(result.card, /入库\s+未设置/);
-  assert.match(result.card, /^已存到下载目录\n/);
-  assert.match(result.card, /⬇️\s+一、目标与范围\n还没选 Vault 文件夹\n去设置$/);
-  assert.match(result.card, /去设置$/);
-  assert.doesNotMatch(result.card, /不完整/);
-  assert.equal(result.items.length, 2);
-  assert.equal(png().subarray(1, 4).toString(), 'PNG');
-});
-
-test('选了文件夹就写进去；同一条再收藏就覆盖；刷新后丝带显示已收藏；原文件夹被挪走就只提示', async () => {
-  // 测试里弹不出选目录窗口：用扩展自己的私有存储区（OPFS）目录代替 Vault，按设置页的存法放进 IndexedDB
-  const sw = ctx.serviceWorkers()[0];
+/** 测试里弹不出选目录窗口：用扩展自己的私有存储区（OPFS）目录代替 Vault，按设置页的存法放进 IndexedDB */
+async function setVault(sw) {
   await sw.evaluate(async () => {
     const dir = await navigator.storage.getDirectory();
     await new Promise((resolve, reject) => {
@@ -104,6 +106,30 @@ test('选了文件夹就写进去；同一条再收藏就覆盖；刷新后丝�
       open.onerror = reject;
     });
   });
+}
+
+after(async () => {
+  await ctx?.close();
+  if (dir) fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// Playwright 把下载的文件改成随机名，按数据类型找
+const file = type => fs.readFileSync(result.items.find(d => d.url.startsWith(`data:${type}`)).filename);
+const png = () => file('image/png');
+const md = () => result.note;
+
+test('没选 Vault 文件夹（比如没装 Obsidian）：只把长图下载到 Chrome，最后一步标「无 Obsidian」，给「去设置」', () => {
+  assert.match(result.card, /入库\s+无 Obsidian/);
+  assert.match(result.card, /^无法保存，长图已下载\n/);
+  assert.match(result.card, /⬇️\s+一、目标与范围\n无 Obsidian，长图已下载到 Chrome\n去设置$/);
+  assert.doesNotMatch(result.card, /不完整/);
+  assert.equal(result.items.length, 1);
+  assert.equal(png().subarray(1, 4).toString(), 'PNG');
+});
+
+test('选了文件夹就写进去；同一条再收藏就覆盖；刷新后丝带显示已收藏；原文件夹被挪走就只提示', async () => {
+  const sw = ctx.serviceWorkers()[0];
+  await setVault(sw);
   const tree = () => sw.evaluate(async () => {
     const out = {};
     for await (const [name, h] of (await navigator.storage.getDirectory()).entries()) {
@@ -148,7 +174,7 @@ test('选了文件夹就写进去；同一条再收藏就覆盖；刷新后丝�
   const moved = await collect();
   assert.match(moved, /^已收藏过\n[\s\S]*这次没有重写/);
   assert.deepEqual(await tree(), {}, '原文件夹挪走后不该再写');
-  assert.equal((await sw.evaluate(() => chrome.downloads.search({}))).length, 2, '写进 Vault 时不该再下载');
+  assert.equal((await sw.evaluate(() => chrome.downloads.search({}))).length, 1, '写进 Vault 时不该再下载');
 });
 
 test('标题变了（如命名规则调整）：只有插件写的文件就改成新名字；有用户自己的文件就原地覆盖、不改名', async () => {
@@ -205,43 +231,66 @@ test('进度卡里的回答标题取看得见的第一个标题，跳过读屏�
   assert.doesNotMatch(result.card, /ChatGPT 说/);
 });
 
-test('PNG 尺寸与回答一致（≥4000px 长图）', () => {
+test('PNG 宽度与回答一致，高度 = 回答高度 + 代码框展开多出的高度（≥4000px 长图，M1 验收 P9）', () => {
   const buf = png();
   const w = buf.readUInt32BE(16), h = buf.readUInt32BE(20);
+  const extra = result.geo.panes.reduce((n, p) => n + p.extra, 0);
+  assert.ok(extra > 1000, `测试页的长代码框只多出 ${extra}px`);
   assert.equal(w, Math.round(result.box.width));
-  assert.equal(h, Math.round(result.box.height));
+  assert.ok(Math.abs(h - (result.box.height + extra)) <= 2, `长图高 ${h}，应为 ${result.box.height} + ${extra}`);
   assert.ok(h >= 4000, `测试页回答只有 ${h}px`);
 });
-
-/** 两张 PNG 逐像素比，rect 只比回答里的这一块（相对回答左上角）；返回不同像素占比 */
-async function pixelDiff(a, b, rect) {
+/** 两张 PNG 逐像素比，rect 只比回答里的这一块（相对回答左上角），dyA：这一块在 a 里往下挪了多少（代码框展开）；返回不同像素占比 */
+async function pixelDiff(a, b, rect, dyA = 0) {
   const p = await ctx.newPage();
-  const stat = await p.evaluate(async ([a, b, tol, rect]) => {
+  const stat = await p.evaluate(async ([a, b, tol, rect, dyA]) => {
     const load = async src => { const img = new Image(); img.src = src; await img.decode(); return img; };
     const [x, y] = await Promise.all([load(a), load(b)]);
     const r = rect ?? { x: 0, y: 0, width: Math.min(x.width, y.width), height: Math.min(x.height, y.height) };
     const w = Math.round(r.width), h = Math.round(r.height);
-    const px = img => { const c = new OffscreenCanvas(w, h), g = c.getContext('2d'); g.drawImage(img, -Math.round(r.x), -Math.round(r.y)); return g.getImageData(0, 0, w, h).data; };
-    const da = px(x), db = px(y);
+    const px = (img, dy) => { const c = new OffscreenCanvas(w, h), g = c.getContext('2d'); g.drawImage(img, -Math.round(r.x), -Math.round(r.y + dy)); return g.getImageData(0, 0, w, h).data; };
+    const da = px(x, dyA), db = px(y, 0);
     let diff = 0;
     for (let i = 0; i < da.length; i += 4)
       if (Math.abs(da[i] - db[i]) > tol || Math.abs(da[i + 1] - db[i + 1]) > tol || Math.abs(da[i + 2] - db[i + 2]) > tol) diff++;
     return { ratio: diff / (w * h), sizes: [x.width, x.height, y.width, y.height] };
-  }, [`data:image/png;base64,${a.toString('base64')}`, `data:image/png;base64,${b.toString('base64')}`, PIXEL_TOL, rect]);
+  }, [`data:image/png;base64,${a.toString('base64')}`, `data:image/png;base64,${b.toString('base64')}`, PIXEL_TOL, rect, dyA]);
   await p.close();
   return stat;
 }
 
-test('PNG 与浏览器真实渲染逐像素比，只差抗锯齿', async () => {
-  const stat = await pixelDiff(png(), result.baseline);
+test('PNG 与浏览器真实渲染逐像素比，只差抗锯齿（比到第一个展开的代码框为止）', async () => {
+  const stat = await pixelDiff(png(), result.baseline, { x: 0, y: 0, width: result.box.width, height: Math.min(...result.geo.panes.map(p => p.y)) });
   console.log(`  差异像素 ${(stat.ratio * 100).toFixed(2)}%，尺寸 ${stat.sizes.join('×')}`);
   assert.ok(stat.ratio < MAX_DIFF_RATIO, `差异像素 ${(stat.ratio * 100).toFixed(2)}% 超过 ${MAX_DIFF_RATIO * 100}%`);
 });
 
 test('长图里有跨域图片、网页字体、脚本画的 canvas（M1 验收 P4、P5、P10）', async () => {
-  const stat = await pixelDiff(png(), result.baseline, result.media);
+  const { media, panes } = result.geo;
+  const stat = await pixelDiff(png(), result.baseline, media, panes.filter(p => p.y < media.y).reduce((n, p) => n + p.extra, 0));
   console.log(`  第十节差异像素 ${(stat.ratio * 100).toFixed(2)}%`);
   assert.ok(stat.ratio < MAX_DIFF_RATIO, `第十节差异像素 ${(stat.ratio * 100).toFixed(2)}% 超过 ${MAX_DIFF_RATIO * 100}%：图片、字体或 canvas 没进长图`);
+});
+
+test('长图里代码框展开：120 行都画出来，可横向滚动的块不画滚动条（M1 验收 P9、P15）', async () => {
+  const pane = result.geo.panes.find(p => p.extra > 1000), { wide } = result.geo;
+  const p = await ctx.newPage();
+  // 展开后的代码框里每 20px 一行，每行左边都该有深色的字
+  const lines = await p.evaluate(async ([src, pane]) => {
+    const img = new Image(); img.src = src; await img.decode();
+    const c = new OffscreenCanvas(img.width, img.height), g = c.getContext('2d'); g.drawImage(img, 0, 0);
+    let n = 0;
+    for (let i = 0; i < 120; i++) {
+      const d = g.getImageData(Math.round(pane.x), Math.round(pane.y) + i * 20, 200, 20).data;
+      for (let k = 0; k < d.length; k += 4) if (d[k] + d[k + 1] + d[k + 2] < 300) { n++; break; }
+    }
+    return n;
+  }, [`data:image/png;base64,${png().toString('base64')}`, pane]);
+  await p.close();
+  assert.equal(lines, 120, `长图里代码框只画出 ${lines} 行`);
+  const stat = await pixelDiff(png(), result.baseline, wide);
+  console.log(`  宽块差异像素 ${(stat.ratio * 100).toFixed(2)}%`);
+  assert.ok(stat.ratio < MAX_DIFF_RATIO, `宽块差异像素 ${(stat.ratio * 100).toFixed(2)}%：长图里多画了滚动条`);
 });
 
 test('笔记：frontmatter、折叠的提问、嵌入长图', () => {

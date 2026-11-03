@@ -1,6 +1,30 @@
 # 当前状态
 
-更新：2026-11-03。M1 ⑤ 验收矩阵见 [docs/acceptance/M1-验收矩阵.md](docs/acceptance/M1-验收矩阵.md)：10 类加高清屏全部有真实样本并通过；剩 P9、P15（代码框在长图里的问题）未修，P2、P3 常浩定为暂不修。唯一下一步：常浩定 P9、P15 修不修；之后按 PRD 第 8 节进入「日常使用一周无阻断」。
+更新：2026-11-03。M1 ⑤ 验收矩阵 10 类加高清屏全部通过（见 [docs/acceptance/M1-验收矩阵.md](docs/acceptance/M1-验收矩阵.md)）。P9、P15 已在测试页修好、未提交；插件可打成 zip 发给别人，没接 Obsidian 时只下载长图（见下一节）。P9、P15 已修，矩阵已更新；常浩决定不再重收 T1、T6 复验（平时很少收长代码）。唯一下一步：常浩说「提交」再提交。M1 收尾后的下一件事：M2 支持 Claude 网页版（只加 Claude，不做 Codex，2026-11-03 用户决定，见 PRD 第 8 节）。
+
+## M1 ⑤ 修完 P9、P15；打包发给别人、没接 Obsidian 只下载长图（2026-11-03，Claude，用户“按计划开工”；打包选 zip + 安装说明、没接 Obsidian「只下长图」、P9/P15「现在就开始，一起打包」、进度卡「就原来进度卡的形式，补上这种情况」；未提交、无需发布）
+
+- 时间：开工 `2026-11-03 10:56`（接下一节的断点）。★ 来由：做完 P9、P15；用户要求打包发给别人用，对方没装 Obsidian 时提示无法保存、长图下载到 Chrome。
+- 改了哪些文件：`src/lib/markdown.ts`（`readCodeEditors(answer, copyLine?)` 每行第一次读到时顺带复制，返回 `{ text, lines }`）；`src/entrypoints/content.ts`（快照前先读全代码、复制的行交给 `takeSnapshot`，MD 用同一份；没选 Vault 文件夹时只下载 answer.png，最后一步「无 Obsidian」，标题「无法保存，长图已下载」）；`src/lib/snapshot.ts`（下一节的展开、去滚动条，另加 `bottomMargin`：子元素穿出去的下外边距补到写死高度的元素上，见 L-12）；`tests/fixtures/card-answer.html`（卡片里放一个能纵向滚动的 pre 代码框）；`tests/snapshot.test.mjs`（`before` 先不选文件夹收藏一次取长图和卡片，再设测试文件夹收藏一次读笔记后清掉；`setVault` 抽成函数；没选文件夹用例改成只下载 1 个文件）；`docs/PRD.md`（形态改为可打 zip 发给别人、不上架；FR-5 补没选文件夹只下长图）；`public/安装说明.txt`（随包的安装说明）；`package.json`（`npm run zip`）；`docs/OPERATIONS.md`「打包发给别人」；`AGENTS.md` 导航加一行；`docs/LESSONS.md` L-12。
+- 测试：`node --test tests/*.test.mjs` 原样结果 `ℹ pass 21` / `ℹ fail 0`；`npm run compile` 无报错；`node scripts/check-rules.mjs` 通过。反向验证各自报红：不展开（3 个失败）、不换成读全的行（只画出 45 行）、不去滚动条（宽块 22.72%）、不补外边距（3 个失败）、外层高度不改 auto（3 个失败）、没选文件夹仍全部下载（3 个失败）。
+- 验证：测试页（Playwright 加载 `.output/chrome-mv3`）；`npm run zip` 生成 `.output/chatgpt-clipper-0.1.0-chrome.zip`（22.73 kB，`manifest.json` 在根目录，`安装说明.txt` 文件名带 UTF-8 标记）。真实页面 T1、T6 未复验（等常浩刷新插件后重收）；zip 未在另一台电脑上装过。
+- 截图：进度卡预览 `no-obsidian-preview.png` 在会话临时目录，未入库；真实页面无。
+- 发布与回读：无需发布；zip 由常浩自己发。
+- 与授权不一致之处、遗留问题、范围外发现：`bottomMargin` 修的是改动前就有的问题（以前被长代码框的 16px 滚动条抵消），按验收标准「代码框下方内容不被压住」一起修了。未覆盖：代码框与另一张卡片左右并排时，展开后旁边卡片不跟着变高；CodeMirror 内部若写死最小高度，要靠真实页面复验。设置页提示里建议的文件夹 `00 待整理/ChatGPT收藏` 是常浩自己的习惯，别人用时可能不合适，未改。验收矩阵 P9、P15 待真实页面复验后再改。
+- 真实页面复验（2026-11-03 16:13 常浩重收 T6）：长图 768×701，代码框没展开，只到第 20 行左右（笔记 333 行是全的）。Claude 只读打开测试对话查到：真实页面代码框外有一层网格，计算样式里网格行高是写死的 `430.875px`，展开后又被裁回去；测试页没有这层所以没报红。修法：`snapshot.ts` 展开时外层若是网格，`grid-template-rows` 改 `none`；测试页长代码框外加一层 `display:grid`（不修 3 个用例报红，修后 `ℹ pass 21` / `ℹ fail 0`）。在真实页面只读模拟（复制代码块、写计算样式、放页面外量高，量完删掉）：不修 481px、修后 6314px（= 代码 6264 + 框头 50）。已重新 `npm run zip`。T1 尚未重收；常浩决定不再重收复验（「我基本不会出现收藏这种代码长内容的情况」），矩阵 P9、P15 按测试页 + 真实页面模拟记为已修。
+- 本轮新坑：L-12。
+
+## M1 ⑤ 修 P9、P15（进行中，2026-11-03，Claude，用户选“现在修 P9、P15”、P9 选“展开全部代码”、看过分步计划后“按计划开工”；未提交、无需发布）
+
+- 时间：开工 `2026-11-02 21:15`（同一会话接着做；本节写于 `2026-11-03 10:22` 上下文过半交接时）。来由：验收矩阵 P9（代码框里要滚动才看得到的部分不进长图）、P15（长图里代码框多出横向滚动条、内容上移）。
+- 已定方案（用户确认）：长图里代码块中纵向滚动的代码框展开显示全部代码，长图因此比页面高；所有能滚动的区域在长图里只裁剪、不画滚动条。
+- 改了哪些文件（未提交）：`src/lib/snapshot.ts`（抽出 `styler()`：`css(e)` 算计算样式串、`copy(el)` 复制并写样式；`takeSnapshot` 新增 `opts.codeLines`（编辑器 → 已写样式的全部行，用来换掉只渲染了一部分的行）；能滚动的元素加 `overflow:hidden`，代码块里纵向可滚的代码框改 `height:auto;max-height:none;overflow-x:clip;overflow-y:visible` 并把它外面各层 `height` 改 auto；有展开时用 shadow root 放页面外量 `measure()` 高度）；`tests/fixtures/card-answer.html`（第九节加横向可滚的 `#wide` 宽块）；`tests/snapshot.test.mjs`（`before` 里同一时刻量 `geo`：media、wide、panes（含 extra）；尺寸用例改为「高 = 回答高 + extra」；整页对比只比到第一个代码框；第十节按 extra 下移比；`pixelDiff` 加 `dyA`；新用例「120 行都画出来、宽块无滚动条」）。
+- 测试：`npm run compile` 无报错；`node --test tests/*.test.mjs` 原样结果 `ℹ pass 17` / `ℹ fail 4`（预期中的断点：尺寸 11709 应为约 11725、第十节 13.68%、120 行用例、写入 Vault 用例长图前后两次不一致）。`node scripts/check-rules.mjs` 未跑。
+- 剩余：① `src/lib/markdown.ts` 的 `readCodeEditors(answer, copyLine?)` 读每行时（第一次见到时）顺带 `copyLine(l)`，返回 `Map<编辑器, { text, lines }>`；`answerToMarkdown` 的 `opts.code` 改用 `.text`。② `src/entrypoints/content.ts`：快照前先 `const st = styler(); code = await readCodeEditors(el, l => st.copy(l))`，`takeSnapshot(el, { exclude, codeLines })`，MD 步骤复用同一份 `code`，不再滚第二遍。③ 查尺寸差 16px（11709 vs 11725）与第十节偏移；查写入 Vault 用例两次收藏长图不一致（测试页假编辑器滚过后保留的行变多，可能要让长图不依赖编辑器当前渲染了哪些行，接上①②后多半自愈）。④ 全绿后逐项反向验证（不展开、不换行、不去滚动条各自报红），跑 `check-rules`。⑤ 请常浩刷新插件重收 T1（24 行被框住）和 T6（312 行），看长图完整、无滚动条、高亮在、下方内容没被压住。⑥ 更新矩阵 P9、P15，写交接，等常浩说提交。
+- 截图：无。
+- 发布与回读：无需发布。
+- 与授权不一致之处、遗留问题、范围外发现：风险——代码框若在横排或网格里，外层高度改 auto 可能拉高旁边的块，计划里说过测试页要加一个放在卡片里的代码框覆盖，尚未加。
+- 本轮新坑：无。
 
 ## M1 ⑤ 修 S3 文件卡片 P14，改正第十节长图测试（2026-11-03，Claude，用户选“修 S3 文件卡片”，修后“已刷新并收藏”、看过结果后“提交”；已提交、无需发布）
 

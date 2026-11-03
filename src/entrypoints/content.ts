@@ -1,8 +1,8 @@
 import { answerFingerprint, answerKey, answerQuestion, answerTitle, findAnswers } from '@/lib/adapter';
-import { answerToMarkdown, buildNote, readCodeEditors } from '@/lib/markdown';
+import { answerToMarkdown, buildNote, readCodeEditors, type CodeRead } from '@/lib/markdown';
 import type { DownloadFile, FailCode, Request, Response } from '@/lib/messages';
 import { folderName, noteName } from '@/lib/naming';
-import { embedResources, takeSnapshot, toPng } from '@/lib/snapshot';
+import { embedResources, styler, takeSnapshot, toPng } from '@/lib/snapshot';
 import { mountRibbon, progressCard, STEPS, UI_ATTR, type RibbonState } from '@/lib/ui';
 
 export default defineContentScript({
@@ -62,9 +62,16 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
   try {
     card.step(0, 'on');
     await nextFrame();
-    let snap;
+    let snap, code: Map<Element, CodeRead> | undefined;
     try {
-      snap = takeSnapshot(el, { exclude: `[${UI_ATTR}]` });
+      // 长代码先读全，读的时候把每行连样式复制下来给长图用；转 MD 用同一份，不再滚第二遍
+      const st = styler();
+      try {
+        code = await readCodeEditors(el, l => st.copy(l));
+      } finally {
+        st.dispose();
+      }
+      snap = takeSnapshot(el, { exclude: `[${UI_ATTR}]`, codeLines: new Map([...code].map(([e, c]) => [e, c.lines])) });
       card.step(0, 'ok');
     } catch (e) {
       fail(0, '快照', e);
@@ -83,7 +90,7 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
     card.step(2, 'on');
     await nextFrame();
     try {
-      const body = answerToMarkdown(el, { exclude: `[${UI_ATTR}]`, code: await readCodeEditors(el) });
+      const body = answerToMarkdown(el, { exclude: `[${UI_ATTR}]`, code: code ?? (await readCodeEditors(el)) });
       const md = buildNote({ url: `${location.origin}${location.pathname}`, captured: started, title, question: answerQuestion(el), body, image: files.length > 0 });
       files.unshift({ name: noteName(title), url: `data:text/markdown;charset=utf-8,${encodeURIComponent(md)}` });
       card.step(2, 'ok', `${body.length} 字`);
@@ -91,7 +98,7 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
       fail(2, 'MD 文件', e);
     }
     const partial = failed.length > 0;   // 快照、PNG 或 MD 没做成，存下来的不完整
-    let savedTo = '', firstId = 0, fix: FailCode | undefined, note = '';
+    let savedTo = '', firstId = 0, fix: FailCode | undefined, note = '', got = '';
     if (files.length) {
       card.step(3, 'on');
       const folder = folderName(title, started);
@@ -101,14 +108,19 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
         note = res.moved ? '已收藏过' : res.updated ? '已更新' : '已存入';
         card.step(3, 'ok', note);
       } else {
-        // 写不进 Vault：退回浏览器下载，并说明原因（FR-5）
+        // 写不进 Vault：退回浏览器下载，并说明原因（FR-5）。没选 Vault 文件夹（比如没装 Obsidian）只下载长图（2026-11-03 用户决定）
         fix = res?.code;
-        fail(3, '', new Error(res?.error ?? '后台无响应'), fix === 'no-folder' ? '未设置' : fix === 'no-permission' ? '授权失效' : '失败');
+        const noVault = fix === 'no-folder', png = files.filter(f => f.name === 'answer.png');
+        const dl = noVault && png.length ? png : files;
+        if (noVault) card.step(3, 'bad', '无 Obsidian');
+        else fail(3, '', new Error(res?.error ?? '后台无响应'), fix === 'no-permission' ? '授权失效' : '失败');
         try {
-          firstId = (await send({ type: 'download', folder, files })).ids?.[0] ?? 0;
+          firstId = (await send({ type: 'download', folder, files: dl })).ids?.[0] ?? 0;
+          got = dl === png ? '长图' : '文件';
         } catch (e) {
           failed.push(`退回下载也失败：${e instanceof Error ? e.message : String(e)}`);
         }
+        if (noVault) failed.unshift(got ? `无 Obsidian，${got}已下载到 Chrome` : '无 Obsidian，无法保存');
       }
     }
     // 顶部写收藏状态；底部第一行回答标题，第二行日期 · 收藏文件夹（用户 2026-11-02 要求日期单独一行、标题不重复）
@@ -121,7 +133,8 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
         : { icon: '📁', head: name, sub: [date, dir].filter(Boolean).join(' · ') }, undefined, 8000);
     } else {
       setRibbon('err');
-      const headline = savedTo ? '已收藏（不完整）' : firstId ? `已存到下载目录${partial ? '（不完整）' : ''}` : '收藏失败';
+      const headline = savedTo ? '已收藏（不完整）' : !firstId ? '收藏失败'
+        : fix === 'no-folder' ? `无法保存，${got}已下载` : `已存到下载目录${partial ? '（不完整）' : ''}`;
       const action = fix
         ? { label: fix === 'no-folder' ? '去设置' : '去授权', run: () => void send({ type: 'options' }) }
         : { label: '重试', run: () => { card.close(); busy.delete(el); void capture(el, setRibbon); } };

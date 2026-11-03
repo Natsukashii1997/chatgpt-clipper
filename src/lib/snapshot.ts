@@ -1,5 +1,6 @@
 // 离线快照（方案 C，docs/recon/2026-11-02-原型1-长图.md）：复制回答 → 逐元素写入计算样式 → SVG foreignObject 栅格化成 PNG。
 // 只出 PNG：用户 2026-11-02 决定不要离线 HTML（PRD FR-3）。
+import { MD } from './adapter';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 // 这些属性一律写全，不和默认值比较：Tailwind 预设 `border: 0 solid`，比较后会漏掉宽度 0，只剩 solid → 粗黑框（LESSONS L-01）
@@ -19,22 +20,55 @@ export interface Snapshot {
 export interface SnapshotOptions {
   /** 不进快照的节点（比如插件自己插进回答里的按钮） */
   exclude?: string;
+  /** 长代码编辑器 → 读全时复制下来的每一行（已写好样式），换掉副本里只渲染了一部分的行（M1 验收 P9） */
+  codeLines?: Map<Element, HTMLElement[]>;
 }
 
-/** 复制回答并写入计算样式 */
+/** 写样式的工具：比较时用的浏览器默认样式放在一个临时 iframe 里，用完 dispose */
+export function styler() {
+  const defaults = defaultStyles();
+  const css = (e: Element) => {
+    const cs = getComputedStyle(e), dd = defaults.of(e);
+    let out = '';
+    for (const p of cs) {
+      if (p.startsWith('--')) continue;
+      const v = cs.getPropertyValue(p);
+      if (ALWAYS.test(p) || dd[p] !== v) out += `${p}:${v};`;
+    }
+    return out;
+  };
+  return {
+    css,
+    /** 复制一个元素，自己和后代都写上计算样式、去掉类名 */
+    copy(el: Element): HTMLElement {
+      const c = el.cloneNode(true) as HTMLElement;
+      const src = [el, ...el.querySelectorAll('*')], dst = [c, ...c.querySelectorAll('*')];
+      src.forEach((e, i) => { dst[i]!.removeAttribute('class'); dst[i]!.setAttribute('style', css(e)); });
+      return c;
+    },
+    dispose: defaults.dispose,
+  };
+}
+
+/** 复制回答并写入计算样式。能滚动的区域不画滚动条；代码块里纵向滚动的代码框展开显示全部代码（M1 验收 P9、P15） */
 export function takeSnapshot(el: HTMLElement, opts: SnapshotOptions = {}): Snapshot {
   const t0 = performance.now();
-  const defaults = defaultStyles();
+  const st = styler();
   try {
     const clone = el.cloneNode(true) as HTMLElement;
     const src = [el, ...el.querySelectorAll('*')], dst = [clone, ...clone.querySelectorAll('*')];
+    const expand: HTMLElement[] = [], margins = new Map<Element, number>();
     src.forEach((e, i) => {
-      const cs = getComputedStyle(e), dd = defaults.of(e);
-      let css = '';
-      for (const p of cs) {
-        if (p.startsWith('--')) continue;
-        const v = cs.getPropertyValue(p);
-        if (ALWAYS.test(p) || dd[p] !== v) css += `${p}:${v};`;
+      const cs = getComputedStyle(e);
+      let css = st.css(e);
+      const mb = bottomMargin(e, margins);
+      if (mb !== (parseFloat(cs.marginBottom) || 0)) css += `margin-bottom:${mb}px;`;
+      if (/auto|scroll/.test(cs.overflowX + cs.overflowY)) {
+        // SVG 里画出来是老式滚动条（页面上是悬浮的、看不见）：一律只裁剪不滚动
+        if (e.closest(MD.codeBlock) && /auto|scroll/.test(cs.overflowY) && e.scrollHeight > e.clientHeight) {
+          css += 'height:auto;max-height:none;overflow-x:clip;overflow-y:visible;';
+          expand.push(dst[i] as HTMLElement);
+        } else css += 'overflow:hidden;';
       }
       const d = dst[i]!;   // 副本与原件逐个对应
       d.removeAttribute('class');
@@ -46,17 +80,64 @@ export function takeSnapshot(el: HTMLElement, opts: SnapshotOptions = {}): Snaps
         img.setAttribute('style', css);
         d.replaceWith(img);
       } catch { /* 留空 */ }
+      // 只渲染了一部分的长代码：换成读全时复制下来的行，占位块一起去掉
+      const lines = opts.codeLines?.get(e);
+      if (lines) d.replaceChildren(...lines);
     });
     if (opts.exclude) clone.querySelectorAll(opts.exclude).forEach(n => n.remove());
     clean(clone);
+    // 代码框展开后变高：它外面各层写死的高度改成随内容；网格的行高在计算样式里也是写死的 px（真实页面代码框外有一层网格）
+    for (const pane of expand)
+      for (let a = pane.parentElement; a; a = a.parentElement) {
+        a.style.setProperty('height', 'auto');
+        if (/grid/.test(a.style.display)) a.style.setProperty('grid-template-rows', 'none');
+      }
 
-    const r = el.getBoundingClientRect(), width = Math.round(r.width), height = Math.round(r.height);
+    const r = el.getBoundingClientRect(), width = Math.round(r.width);
+    const height = expand.length ? measure(clone, width) : Math.round(r.height);
     const root = document.createElement('div');
     root.setAttribute('style', `width:${width}px;height:${height}px;overflow:hidden;background:${pageBackground()}`);
     root.appendChild(clone);
     return { root, width, height, nodes: src.length, ms: Math.round(performance.now() - t0) };
   } finally {
-    defaults.dispose();
+    st.dispose();
+  }
+}
+
+// 页面上元素底部实际"穿出去"的下外边距：最后一个子元素的下外边距穿过它、和它自己的合并（比如代码块里 pre 的 16px）。
+// 副本写死了高度，子元素的外边距穿不出来，要补到这个元素自己身上，否则下面的内容上移。
+// 判断看页面上的位置：它没有下内边距和下边框、底边正好贴着最后一个子元素的底边
+function bottomMargin(e: Element, memo: Map<Element, number>): number {
+  let m = memo.get(e);
+  if (m !== undefined) return m;
+  const cs = getComputedStyle(e), own = parseFloat(cs.marginBottom) || 0, c = e.lastElementChild;
+  m = own;
+  if (c && cs.display === 'block' && cs.overflow === 'visible' && !parseFloat(cs.paddingBottom) && !parseFloat(cs.borderBottomWidth)) {
+    const cc = getComputedStyle(c);
+    if (/^(block|list-item|table)$/.test(cc.display) && cc.float === 'none' && !/absolute|fixed/.test(cc.position)
+      && Math.abs(e.getBoundingClientRect().bottom - c.getBoundingClientRect().bottom) < 0.5) {
+      const inner = bottomMargin(c, memo);   // 合并规则：最大的正值加最小的负值
+      m = Math.max(own, inner, 0) + Math.min(own, inner, 0);
+    }
+  }
+  memo.set(e, m);
+  return m;
+}
+
+// 副本只靠写好的样式排版：放进页面外的 shadow root（不受页面样式表影响，和画进 SVG 时一样）量高度
+function measure(clone: HTMLElement, width: number): number {
+  const host = document.createElement('div');
+  host.style.cssText = `position:absolute;left:-100000px;top:0;width:${width}px`;
+  const box = document.createElement('div');
+  box.style.cssText = `width:${width}px`;
+  host.attachShadow({ mode: 'open' }).appendChild(box);
+  document.body.appendChild(host);
+  try {
+    box.appendChild(clone);
+    return Math.ceil(box.getBoundingClientRect().height);
+  } finally {
+    box.removeChild(clone);
+    host.remove();
   }
 }
 

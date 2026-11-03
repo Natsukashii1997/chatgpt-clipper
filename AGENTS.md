@@ -12,6 +12,7 @@ Chrome 桌面版 MV3 插件，常浩自用：在 ChatGPT 网页上一键把某�
 | 开需求、拆任务、实现、审查 | 下面「Agent skills」一节 |
 | 写交接、验收别人的交接 | [docs/templates/handoff.md](docs/templates/handoff.md) 骨架；[OPERATIONS](docs/OPERATIONS.md)「交接写法」「报告与验收」 |
 | 做 M1 验收、看哪类没过 | [docs/acceptance/M1-验收矩阵.md](docs/acceptance/M1-验收矩阵.md) |
+| 打包发给别人 | [OPERATIONS](docs/OPERATIONS.md)「打包发给别人」、`public/安装说明.txt` |
 
 项目长出接口、样式、发布等文档后，在这张表里加一行。
 

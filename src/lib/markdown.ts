@@ -10,7 +10,7 @@ const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'BUTTON', 'svg'
   'VIDEO', 'AUDIO', 'IFRAME']);
 
 /** 把一条回答转成 Markdown 正文。exclude：插件自己挂在回答里的节点；code：readCodeEditors 读全的长代码 */
-export function answerToMarkdown(answer: HTMLElement, opts: { exclude?: string; code?: Map<Element, string> } = {}): string {
+export function answerToMarkdown(answer: HTMLElement, opts: { exclude?: string; code?: Map<Element, CodeRead> } = {}): string {
   const skip = (el: Element) => SKIP.has(el.tagName) || el.matches(MD.skip) || (!!opts.exclude && el.matches(opts.exclude)) || hidden(el);
   const isBlock = (el: Element) => BLOCK.has(el.tagName) || el.matches(MD.katexDisplay);
   const kids = (el: Element) => [...el.children].filter(c => !skip(c));
@@ -184,18 +184,22 @@ const FENCE = /(^ *(?:```|~~~~)[^\n]*\n[\s\S]*?\n *(?:```|~~~~)$)/m;
 
 /** 长代码读全（M1 验收 P13）：编辑器只渲染代码框里看得见附近的行，其余是占位块。有占位块的，把代码框滚到页面里、
  *  从头到尾逐段滚动，每段等编辑器补完再读，按行在编辑器里的位置去重；读完还原滚动位置（编辑器渲染了哪些行不一定还原）。
- *  没有占位块的不动页面 */
-export async function readCodeEditors(answer: Element): Promise<Map<Element, string>> {
-  const out = new Map<Element, string>();
+ *  没有占位块的不动页面。copyLine：每行第一次读到时顺带复制一份（长图用，M1 验收 P9），结果在 lines 里 */
+export interface CodeRead { text: string; lines: HTMLElement[] }
+export async function readCodeEditors(answer: Element, copyLine?: (line: Element) => HTMLElement): Promise<Map<Element, CodeRead>> {
+  const out = new Map<Element, CodeRead>();
   for (const editor of answer.querySelectorAll(`${MD.codeBlock} ${MD.codeEditor}`)) {
     if (codeLines(editor).length === editor.children.length) continue;
     let box = editor.parentElement;
     while (box && !(box.scrollHeight > box.clientHeight && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
     if (!box || !answer.contains(box)) continue;
-    const lines = new Map<number, string>(), x = scrollX, y = scrollY, top = box.scrollTop;
+    const lines = new Map<number, { text: string; copy?: HTMLElement }>(), x = scrollX, y = scrollY, top = box.scrollTop;
     const read = () => {
       const base = editor.getBoundingClientRect().top;
-      for (const l of codeLines(editor)) lines.set(Math.round(l.getBoundingClientRect().top - base), l.textContent ?? '');
+      for (const l of codeLines(editor)) {
+        const at = Math.round(l.getBoundingClientRect().top - base);
+        if (!lines.has(at)) lines.set(at, { text: l.textContent ?? '', copy: copyLine?.(l) });
+      }
     };
     try {
       box.scrollIntoView({ block: 'nearest' });
@@ -214,7 +218,8 @@ export async function readCodeEditors(answer: Element): Promise<Map<Element, str
       box.scrollTop = top;
       scrollTo(x, y);
     }
-    out.set(editor, [...lines].sort((a, b) => a[0] - b[0]).map(([, t]) => t).join('\n'));
+    const sorted = [...lines].sort((a, b) => a[0] - b[0]).map(([, l]) => l);
+    out.set(editor, { text: sorted.map(l => l.text).join('\n'), lines: sorted.flatMap(l => (l.copy ? [l.copy] : [])) });
   }
   return out;
 }
@@ -243,10 +248,10 @@ function fence(pre: Element, lang?: string): string {
 }
 
 /** ChatGPT 的代码块：代码编辑器逐行取（空行里只有 br），否则取 pre；语言看编辑器或块头 */
-function codeBlock(block: Element, code?: Map<Element, string>): string {
+function codeBlock(block: Element, code?: Map<Element, CodeRead>): string {
   const lang = MD.codeBlockLang(block);
   const editor = block.querySelector(MD.codeEditor);
-  if (editor) return fenced(code?.get(editor) ?? codeLines(editor).map(l => l.textContent ?? '').join('\n'), lang);
+  if (editor) return fenced(code?.get(editor)?.text ?? codeLines(editor).map(l => l.textContent ?? '').join('\n'), lang);
   const pre = block.querySelector('pre');
   return pre ? fence(pre, lang || undefined) : '';
 }
