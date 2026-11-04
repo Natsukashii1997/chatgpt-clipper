@@ -1,4 +1,4 @@
-import { answerChars, answerFingerprint, answerKey, answerQuestion, answerTitle, findAnswers, inChat, NOISE, SITE_NAME } from '@/lib/adapter';
+import { answerBlocks, answerChars, answerFingerprint, answerKey, answerQuestion, answerTitle, findAnswers, inChat, NOISE, selectedBlocks, SITE_NAME } from '@/lib/adapter';
 import { answerToMarkdown, buildNote, readCodeEditors, type CodeRead } from '@/lib/markdown';
 import type { DownloadFile, FailCode, Request, Response } from '@/lib/messages';
 import { clipHash, jumpToClip } from '@/lib/jump';
@@ -15,8 +15,13 @@ export default defineContentScript({
       for (const el of findAnswers()) {
         let r = ribbons.get(el);
         if (!r || !el.querySelector(`:scope > [${UI_ATTR}]`)) {
-          const ribbon = mountRibbon(el, () => capture(el, r!.set));
-          const fresh: Ribbon = { el, state: 'idle', text: -1, set: s => { fresh.state = s; ribbon.set(s); } };
+          const ribbon = mountRibbon(el, () => {
+            const blocks = picked(el);
+            // 节选不改丝带的收藏状态：收的时候转蓝，收完恢复
+            if (blocks.length) void capture(el, s => ribbon.set(s === 'busy' ? 'busy' : r!.state), blocks);
+            else void capture(el, r!.set);
+          });
+          const fresh: Ribbon = { el, state: 'idle', text: -1, set: s => { fresh.state = s; ribbon.set(s); }, pick: ribbon.pick };
           ribbons.set(el, (r = fresh));
         }
         // 回答文字常晚于丝带出来（流式输出、页面分批渲染）：文字变了就重新查一次是否收藏过
@@ -32,8 +37,24 @@ export default defineContentScript({
       if (!pending) pending = window.setTimeout(() => { pending = 0; scan(); }, 300);
     }).observe(document.body, { childList: true, subtree: true });
     scan();
+    // 选中文字时，选区所在回答的丝带变荧光笔
+    let picking = 0;
+    document.addEventListener('selectionchange', () => {
+      if (!picking) picking = requestAnimationFrame(() => {
+        picking = 0;
+        for (const el of findAnswers()) ribbons.get(el)?.pick(picked(el).length);
+      });
+    });
   },
 });
+
+/** 当前选区碰到的这条回答里的块 */
+function picked(el: HTMLElement): HTMLElement[] {
+  const s = getSelection();
+  if (!s?.rangeCount || s.isCollapsed) return [];
+  const r = s.getRangeAt(0);
+  return r.intersectsNode(el) ? selectedBlocks(el, r) : [];
+}
 
 // 进入对话页：带 #clip- 的（从笔记跳回）去找那条回答；改版自检（2026-11-04 用户选定 A 版）：打开 10 秒后一条回答都没认出来，提醒一次（每个对话一次）
 const CHECK_AFTER = 10_000;
@@ -53,7 +74,7 @@ function watchChat() {
   }, CHECK_AFTER);
 }
 
-interface Ribbon { el: HTMLElement; state: RibbonState; text: number; set: (s: RibbonState) => void }
+interface Ribbon { el: HTMLElement; state: RibbonState; text: number; set: (s: RibbonState) => void; pick: (n: number) => void }
 const ribbons = new WeakMap<HTMLElement, Ribbon>();
 
 /** 收藏过的回答，丝带显示「已收藏」 */
@@ -65,16 +86,24 @@ async function markSaved(list: Ribbon[]) {
 
 const busy = new WeakSet<HTMLElement>();
 
-async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
+// 只收选中段落时，没选中的部分打上这个属性，长图和笔记都去掉，收完清掉
+const CUT = 'data-clipper-cut';
+
+/** blocks：只收这几块（节选，FR-12）。单独一条收藏：指纹是回答指纹加块序号，文件夹名带「（节选）」，不覆盖整条收藏 */
+async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blocks?: HTMLElement[]) {
   if (busy.has(el)) return;
   busy.add(el);
   setRibbon('busy');
   // 回答没有标题就用提问，最多 30 字（M1 验收 P12）
-  const title = (answerTitle(el) || answerQuestion(el).replace(/\s+/g, ' ').trim().slice(0, 30)).slice(0, 120), started = new Date(), id = await answerFingerprint(el);
+  const title = (answerTitle(el) || answerQuestion(el).replace(/\s+/g, ' ').trim().slice(0, 30)).slice(0, 120), started = new Date(), answerId = await answerFingerprint(el);
+  const all = blocks && answerBlocks(el), id = blocks ? `${answerId}~${blocks.map(b => all!.indexOf(b)).join('-')}` : answerId;
   const card = progressCard();
   const files: DownloadFile[] = [], failed: string[] = [], warns: string[] = [];
-  // 改版自检：先量页面上的这条回答，结果明显比它少就照样存、标黄
-  const pageChars = answerChars(el), pageHeight = Math.round(el.getBoundingClientRect().height);
+  // 改版自检：先量页面上的这条回答（节选量选中的块），结果明显比它少就照样存、标黄
+  const parts = blocks ?? [el];
+  const pageChars = parts.reduce((n, b) => n + answerChars(b), 0), pageHeight = Math.round(parts.reduce((n, b) => n + b.getBoundingClientRect().height, 0));
+  // 长图里没选中的部分走 drop（去掉后重新量高），笔记里跳过
+  const drop = [NOISE, blocks && `[${CUT}]`].filter(Boolean).join(', '), skip = [`[${UI_ATTR}]`, blocks && `[${CUT}]`].filter(Boolean).join(', ');
   const fail = (i: number, what: string, e: unknown, short = '失败') => {
     const reason = e instanceof Error ? e.message : String(e);
     card.step(i, 'bad', short);
@@ -82,6 +111,7 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
     console.error(`[chatgpt-clipper] ${answerKey(el)} ${what || STEPS[i]}失败`, e);
   };
   try {
+    if (blocks) cut(el, new Set(blocks));
     card.step(0, 'on');
     await nextFrame();
     let snap, code: Map<Element, CodeRead> | undefined;
@@ -93,7 +123,7 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
       } finally {
         st.dispose();
       }
-      snap = takeSnapshot(el, { exclude: `[${UI_ATTR}]`, drop: NOISE, codeLines: new Map([...code].map(([e, c]) => [e, c.lines])) });
+      snap = takeSnapshot(el, { exclude: `[${UI_ATTR}]`, drop, codeLines: new Map([...code].map(([e, c]) => [e, c.lines])) });
       card.step(0, 'ok');
     } catch (e) {
       fail(0, '快照', e);
@@ -114,11 +144,11 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
     card.step(2, 'on');
     await nextFrame();
     try {
-      const body = answerToMarkdown(el, { exclude: `[${UI_ATTR}]`, code: code ?? (await readCodeEditors(el)) });
+      const body = answerToMarkdown(el, { exclude: skip, code: code ?? (await readCodeEditors(el)) });
       // 回答本身很短（不到 20 字）不比字数
       const chars = body.replace(/\s+/g, '').length, few = pageChars >= 20 && chars < pageChars / 2;
       if (few) warns.push(chars ? `笔记只读到页面文字的 ${Math.round((chars / pageChars) * 100)}%` : '笔记没读到正文');
-      const md = buildNote({ url: `${location.origin}${location.pathname}${clipHash(id)}`, captured: started, title, question: answerQuestion(el), body, image: files.length > 0, warn: warns });
+      const md = buildNote({ url: `${location.origin}${location.pathname}${clipHash(answerId)}`, captured: started, title, question: answerQuestion(el), body, image: files.length > 0, warn: warns, excerpt: !!blocks });
       files.unshift({ name: noteName(title), url: `data:text/markdown;charset=utf-8,${encodeURIComponent(md)}` });
       card.step(2, few ? 'warn' : 'ok', `${body.length} 字`);
     } catch (e) {
@@ -128,7 +158,7 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
     let savedTo = '', firstId = 0, fix: FailCode | undefined, note = '', got = '', why: Why | undefined, open: Place['open'];
     if (files.length) {
       card.step(3, 'on');
-      const folder = folderName(title, started);
+      const folder = `${folderName(title, started)}${blocks ? '（节选）' : ''}`;
       const res = (await browser.runtime.sendMessage({ type: 'save', id, folder, files } satisfies Request).catch((e: Error) => ({ ok: false, error: e.message }))) as Response | undefined;
       if (res?.ok) {
         savedTo = res.path ?? '';
@@ -172,7 +202,7 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
         : fix === 'no-folder' ? `无法保存，${got}已下载` : `已存到下载目录${partial ? '（不完整）' : ''}`;
       const action = fix
         ? { label: fix === 'no-folder' ? '去设置' : '去授权', run: () => void send({ type: 'options' }) }
-        : { label: '重试', run: () => { card.close(); busy.delete(el); void capture(el, setRibbon); } };
+        : { label: '重试', run: () => { card.close(); busy.delete(el); void capture(el, setRibbon, blocks); } };
       card.finish(false, headline, { icon: savedTo ? '📁' : firstId ? '⬇️' : '⚠️', head: name, sub: failed.join('；') }, action);
     }
   } catch (e) {
@@ -183,7 +213,20 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
       sub: browser.runtime?.id ? (e instanceof Error ? e.message : String(e)) : '插件刚更新过，刷新这个页面后再收藏' });
   } finally {
     busy.delete(el);
+    el.querySelectorAll(`[${CUT}]`).forEach(n => n.removeAttribute(CUT));
   }
+}
+
+/** 给回答里不含要收的块的部分打 CUT：从回答往下，含要收的块就往里走，不含就整棵打上 */
+function cut(el: HTMLElement, keep: Set<HTMLElement>) {
+  const walk = (e: Element) => {
+    for (const c of e.children) {
+      if (keep.has(c as HTMLElement)) continue;
+      if ([...keep].some(k => c.contains(k))) walk(c);
+      else c.setAttribute(CUT, '');
+    }
+  };
+  walk(el);
 }
 
 /** 打开 obsidian:// 链接：浏览器第一次会问要不要打开 Obsidian */

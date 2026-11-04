@@ -35,6 +35,32 @@ export function answerChars(el: HTMLElement): number {
   return len;
 }
 
+/** 「块」：只收选中段落时按块收（FR-12）。Claude：正文 Markdown 根下的每个子元素，加上正文外的 Artifact 卡片；
+ *  ChatGPT（DIL 渲染，外面还套着 section）：段落、标题、列表、表格、代码块、文档块、卡片网格、带框卡片、公式，取最外层的那个 */
+const BLOCK = CLAUDE ? '[data-cds="Prose"] .standard-markdown > *, [data-cds="Card"][data-file-row-card]'
+  : 'p, h1, h2, h3, h4, h5, h6, ul, ol, table, pre, blockquote, hr, img, figure, .katex-display, [data-client-defined-widget], [data-d-component="grid"], [data-d-has-border], [data-learning-block]';
+
+export function answerBlocks(el: HTMLElement): HTMLElement[] {
+  return [...el.querySelectorAll<HTMLElement>(BLOCK)].filter(b => {
+    for (let a = b.parentElement; a && a !== el; a = a.parentElement) if (a.matches(BLOCK)) return false;
+    // ChatGPT 读屏专用的「ChatGPT 说：」标题不算
+    return !(NOISE && b.closest(NOISE)) && !b.matches('[data-conversation-role]');
+  });
+}
+
+/** 选区碰到的块：块里真选中了字才算（三击选段时选区会伸到下一段开头）；没有字的块（图片、分隔线）碰到就算 */
+export function selectedBlocks(el: HTMLElement, r: Range): HTMLElement[] {
+  return answerBlocks(el).filter(b => {
+    if (!r.intersectsNode(b)) return false;
+    if (!b.textContent?.trim()) return true;
+    const x = document.createRange();
+    x.selectNodeContents(b);
+    if (r.compareBoundaryPoints(Range.START_TO_START, x) > 0) x.setStart(r.startContainer, r.startOffset);
+    if (r.compareBoundaryPoints(Range.END_TO_END, x) < 0) x.setEnd(r.endContainer, r.endOffset);
+    return x.toString().trim() !== '';
+  });
+}
+
 export function answerKey(el: HTMLElement): string {
   return el.dataset.chatgptSearchUnitKey ?? el.dataset.turnKey ?? '';
 }

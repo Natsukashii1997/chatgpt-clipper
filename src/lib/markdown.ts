@@ -229,10 +229,10 @@ export async function readCodeEditors(answer: Element, copyLine?: (line: Element
 }
 
 /** 整篇笔记：frontmatter + 折叠的提问 + 长图 + 正文（PRD 第 2 节模板） */
-export function buildNote(n: { url: string; captured: Date; title: string; question: string; body: string; image: boolean; warn?: string[] }): string {
+export function buildNote(n: { url: string; captured: Date; title: string; question: string; body: string; image: boolean; warn?: string[]; excerpt?: boolean }): string {
   const { date, time } = beijingTime(n.captured);
   const front = ['---', `source: ${SITE}`, `url: ${n.url}`, `captured: ${date} ${time}`, `title: ${JSON.stringify(n.title)}`,
-    `tags: [${SITE}收藏]`, ...(n.warn?.length ? ['incomplete: true'] : []), '---'].join('\n');
+    `tags: [${SITE}收藏]`, ...(n.excerpt ? ['excerpt: true'] : []), ...(n.warn?.length ? ['incomplete: true'] : []), '---'].join('\n');
   const quote = (n.question || '（没找到提问）').split('\n').map(l => (l.trim() ? `> ${l}` : '>')).join('\n');
   // 改版自检没过：标「可能不完整」，以后在 Obsidian 里搜 incomplete 找出来重收
   const warn = n.warn?.length ? `> [!warning] 可能不完整\n> ${n.warn.join('；')}，页面可能改版了。` : '';

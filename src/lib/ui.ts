@@ -13,13 +13,18 @@ const RIBBON_W = 16, RIBBON_LEFT = -(ANSWER_GUTTER - 1);
 
 const RIBBON_CSS = `
 :host{all:initial;display:block;position:absolute;top:0;bottom:0;left:${RIBBON_LEFT}px;width:${RIBBON_W}px;pointer-events:none}
-.rib{position:sticky;top:${STICKY_TOP}px;pointer-events:auto;display:block;width:${RIBBON_W}px;height:44px;border:0;padding:0;margin:0;cursor:pointer;
+.st{position:sticky;top:${STICKY_TOP}px}
+.rib{pointer-events:auto;display:block;width:${RIBBON_W}px;height:44px;border:0;padding:0;margin:0;cursor:pointer;
   background:#ffb020;clip-path:polygon(0 0,100% 0,100% 100%,50% 82%,0 100%);opacity:.35;transition:height .18s,opacity .18s}
 .rib:hover,.rib:focus-visible{height:60px;opacity:1;outline:none}
 .rib.on{opacity:1}
 .rib.busy{background:#2f6bff;cursor:progress}
 .rib.done{background:#10a37f;opacity:.75}
-.rib.err{background:#d93025}`;
+.rib.err{background:#d93025}
+.rib.pick{height:60px;opacity:1;background:repeating-linear-gradient(135deg,#2f6bff 0 5px,#7ea2ff 5px 10px)}
+.pill{display:none;position:absolute;left:0;top:-24px;white-space:nowrap;padding:2px 9px;border-radius:999px;background:#fff;color:#2f6bff;border:1px solid #2f6bff;
+  box-shadow:0 3px 10px rgba(0,0,0,.12);font:11px/16px -apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",sans-serif}
+.rib.pick+.pill{display:block}`;
 
 const DOCK_CSS = `
 :host{all:initial}
@@ -79,19 +84,32 @@ function shadowHost(tag: string, css: string): { host: HTMLElement; root: Shadow
   return { host, root };
 }
 
-/** 在回答里挂一条丝带（绝对定位在左侧空白处，不影响回答布局） */
+/** 在回答里挂一条丝带（绝对定位在左侧空白处，不影响回答布局）。
+ *  pick(n)：回答里选中了 n 块时丝带变成蓝色斜纹「荧光笔」，上方标签写块数，点它只收这几块（FR-12，用户 2026-11-04 选定 C 版样式）；n 为 0 恢复 */
 export function mountRibbon(answer: HTMLElement, onClick: () => void) {
   if (getComputedStyle(answer).position === 'static') answer.style.position = 'relative';
   const { host, root } = shadowHost('clipper-ribbon', RIBBON_CSS);
-  root.innerHTML += '<button class="rib" title="收藏这条回答" aria-label="收藏这条回答"></button>';
-  const btn = root.querySelector('button')!;
+  root.innerHTML += '<div class="st"><button class="rib" title="收藏这条回答" aria-label="收藏这条回答"></button><div class="pill"></div></div>';
+  const btn = root.querySelector('button')!, pill = root.querySelector<HTMLElement>('.pill')!;
+  let state: RibbonState = 'idle', picked = 0;
+  const draw = () => {
+    const on = btn.classList.contains('on');
+    btn.className = `rib ${state !== 'idle' ? state : ''} ${picked && state !== 'busy' ? 'pick' : ''}`;
+    btn.classList.toggle('on', on);
+    pill.textContent = `收藏选中 · ${picked} 块`;
+    btn.title = picked ? `只收藏选中的 ${picked} 块` : '收藏这条回答';
+    btn.setAttribute('aria-label', btn.title);
+  };
+  // 点丝带不清掉选区
+  btn.addEventListener('pointerdown', e => e.preventDefault());
   btn.addEventListener('click', e => { e.stopPropagation(); onClick(); });
   // 鼠标在回答上时丝带变实
   answer.addEventListener('mouseenter', () => btn.classList.add('on'));
   answer.addEventListener('mouseleave', () => btn.classList.remove('on'));
   answer.appendChild(host);
   return {
-    set(state: RibbonState) { btn.className = `rib ${state === 'idle' ? '' : state}`; },
+    set(s: RibbonState) { state = s; draw(); },
+    pick(n: number) { if (n !== picked) { picked = n; draw(); } },
   };
 }
 

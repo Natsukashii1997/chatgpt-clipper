@@ -643,15 +643,139 @@ describe('Claude 网页版', () => {
   });
 });
 
+describe('只收选中段落（荧光笔丝带）', () => {
+  const MSG = '[data-testid="assistant-message"]';
+  const NOISE = '[data-cds="TurnStatus"], :has(> [data-testid="message-actions"])';
+  let sw, cp;
+  // 在 root 里从含 a 的文字中间选到含 b 的文字中间
+  const select = (pg, root, a, b) => pg.evaluate(([root, a, b]) => {
+    const find = s => {
+      const w = document.createTreeWalker(document.querySelector(root), NodeFilter.SHOW_TEXT);
+      for (let n; (n = w.nextNode());) { const i = n.data.indexOf(s); if (i >= 0) return [n, i + 1]; }
+      throw new Error(`找不到「${s}」`);
+    };
+    const r = document.createRange();
+    r.setStart(...find(a));
+    r.setEnd(...find(b));
+    getSelection().removeAllRanges();
+    getSelection().addRange(r);
+  }, [root, a, b]);
+  // Vault 测试文件夹里的收藏：文件夹名 → { 笔记文本 note, 长图字节 png }
+  const vault = () => sw.evaluate(async () => {
+    const out = {};
+    for await (const [d, h] of (await navigator.storage.getDirectory()).entries()) {
+      out[d] = {};
+      for await (const [f, fh] of h.entries()) {
+        const file = await fh.getFile();
+        if (f.endsWith('.md')) out[d].note = await file.text();
+        else out[d].png = [...new Uint8Array(await file.arrayBuffer())];
+      }
+    }
+    return out;
+  });
+  const collect = async (pg, root) => {
+    await pg.locator('clipper-dock .card').evaluateAll(cs => cs.forEach(c => c.setAttribute('data-old', '')));
+    await pg.locator(`${root} clipper-ribbon button`).click();
+    const card = pg.locator('clipper-dock .card:not([data-old])').filter({ has: pg.locator('.loc') });
+    await card.waitFor({ timeout: 30_000 });
+    return card.innerText();
+  };
+
+  before(async () => {
+    sw = ctx.serviceWorkers()[0];
+    await setVault(sw);   // 单独跑这组时也要有 Vault 文件夹
+    cp = await ctx.newPage();
+    await cp.goto(CLAUDE_URL);
+    await cp.locator(`${MSG} clipper-ribbon`).waitFor({ state: 'attached' });
+    await cp.evaluate(() => document.fonts.ready);
+  });
+  after(() => cp.close());
+
+  test('Claude：选中标题和第一段，丝带变荧光笔写「收藏选中 · 2 块」；点了只收这两块，选区还在，取消选择后丝带恢复', async () => {
+    const whole = Object.keys(await vault()).filter(d => !d.includes('（节选）'));
+    const done = () => cp.locator(`${MSG} clipper-ribbon button.rib.done`).count(), wasDone = await done();
+    await select(cp, `${MSG} .standard-markdown`, '快速排序示例', '带注释');
+    const pill = cp.locator(`${MSG} clipper-ribbon .pill`);
+    await cp.locator(`${MSG} clipper-ribbon button.rib.pick`).waitFor({ timeout: 2_000 });
+    assert.equal(await pill.innerText(), '收藏选中 · 2 块');
+    const card = await collect(cp, MSG);
+    assert.match(card, /^已收藏\n/, card);
+    assert.match(card, /📁\s+快速排序示例（节选）\n/);
+    assert.match(await cp.evaluate(() => getSelection().toString()), /排序示例\s+下面是带/, '点丝带不该清掉选区');
+    assert.equal(await cp.locator(`${MSG} clipper-ribbon button.rib.pick`).count(), 1, '收完选区还在，丝带仍是荧光笔');
+
+    await cp.evaluate(() => getSelection().removeAllRanges());
+    await cp.locator(`${MSG} clipper-ribbon button.rib.pick`).waitFor({ state: 'detached', timeout: 2_000 });
+    assert.ok(!(await pill.isVisible()), '取消选择后标签该收起');
+    assert.equal(await done(), wasDone, '丝带恢复成选中之前的状态：节选不算整条已收藏');
+
+    const v = await vault(), ex = Object.keys(v).filter(d => d.includes('（节选）'));
+    assert.equal(ex.length, 1);
+    assert.match(ex[0], /^\d{4}-\d{2}-\d{2} 快速排序示例（节选）$/);
+    const n = v[ex[0]].note;
+    assert.match(n, /\ntags: \[claude收藏\]\nexcerpt: true\n---\n/);
+    assert.match(n, /url: https:\/\/claude\.ai\/chat\/fixture#clip-[0-9a-f]{10}\n/, '跳回链接仍指向这条回答');
+    assert.match(n, /\n## 快速排序示例\n/);
+    assert.match(n, /下面是\*\*带注释\*\*的版本/);
+    for (const s of ['quick_sort(a)', '判别式', 'Artifact', '排序**：先分区'])
+      assert.ok(!n.includes(s), `节选笔记里不该有「${s}」`);
+    // 整条收藏还在、没被改
+    for (const d of whole) assert.doesNotMatch(v[d].note, /excerpt/, `整条收藏「${d}」不该被节选覆盖`);
+
+    // 长图：和浏览器里只留这两块（其余藏起来）的样子逐像素比
+    await cp.addStyleTag({ content: `${NOISE}, ${MSG} [data-find-omitted]:has([data-cds="Card"]), ${MSG} .standard-markdown > :not(h2, p:first-of-type){display:none!important}` });
+    const box = await cp.locator(MSG).boundingBox(), baseline = await cp.locator(MSG).screenshot();
+    await cp.evaluate(() => document.querySelector('style:last-of-type').remove());
+    const png = Buffer.from(v[ex[0]].png);
+    assert.ok(Math.abs(png.readUInt32BE(20) - box.height) <= 1, `长图高 ${png.readUInt32BE(20)}，应为 ${box.height}`);
+    const { ratio, sizes } = await pixelDiff(png, baseline);
+    assert.ok(ratio < MAX_DIFF_RATIO, `不同像素占 ${(ratio * 100).toFixed(2)}%，尺寸 ${sizes}`);
+    assert.equal(await cp.locator(`${MSG} [data-clipper-cut]`).count(), 0, '收完要清掉临时记号');
+  });
+
+  test('Claude：同样几块再收一次覆盖原节选；选了别的块另存一份', async () => {
+    await select(cp, `${MSG} .standard-markdown`, '快速排序示例', '带注释');
+    await collect(cp, MSG);
+    let ex = Object.keys(await vault()).filter(d => d.includes('（节选）'));
+    assert.equal(ex.length, 1, `同样几块应覆盖：${ex}`);
+    await select(cp, `${MSG} .standard-markdown`, '判别式', '两个不等实根');
+    await cp.locator(`${MSG} clipper-ribbon .pill`).filter({ hasText: '收藏选中 · 3 块' }).waitFor({ timeout: 2_000 });
+    await collect(cp, MSG);
+    ex = Object.keys(await vault()).filter(d => d.includes('（节选）'));
+    assert.equal(ex.length, 2, `选了别的块应另存：${ex}`);
+    await cp.evaluate(() => getSelection().removeAllRanges());
+  });
+
+  test('ChatGPT：选中一段和卡片网格里的一张卡，整个网格算一块；笔记只有这两块', async () => {
+    const before = new Set(Object.keys(await vault()));
+    await page.bringToFront();
+    await select(page, ANSWER, '整理一个三人小团队', '要点 1.1');
+    await page.locator(`${ANSWER} clipper-ribbon .pill`).filter({ hasText: '收藏选中 · 2 块' }).waitFor({ timeout: 2_000 });
+    const card = await collect(page, ANSWER);
+    assert.match(card, /^已收藏\n/, card);
+    const v = await vault(), d = Object.keys(v).find(k => !before.has(k));
+    assert.match(d, /（节选）$/);
+    const n = v[d].note;
+    assert.match(n, /\nexcerpt: true\n/);
+    assert.ok(n.includes('整理一个三人小团队'), n);
+    for (const s of ['要点 1.1', '要点 1.4']) assert.ok(n.includes(s), `整个网格都该收：缺「${s}」`);
+    // 笔记标题仍用回答标题，正文里不该有这个小节标题
+    for (const s of ['## 一、目标与范围', '先确认输入', '二、角色分工', '事项 1'])
+      assert.ok(!n.includes(s), `节选笔记里不该有「${s}」`);
+    await page.evaluate(() => getSelection().removeAllRanges());
+  });
+});
+
 // 放在最后：会重新加载插件
 test('插件刷新后没刷新页面：收藏提示「刷新这个页面」，不一直卡在入库', async () => {
   await ctx.serviceWorkers()[0].evaluate(() => chrome.runtime.reload()).catch(() => {});
   await new Promise(r => setTimeout(r, 1000));
-  const done = page.locator('clipper-dock .card.ok, clipper-dock .card.bad');
-  const before = await done.count();
+  // 旧卡片 8 秒后自动关，按个数找新卡片会对不上：先给旧卡片打记号
+  await page.locator('clipper-dock .card').evaluateAll(cs => cs.forEach(c => c.setAttribute('data-old', '')));
+  const done = page.locator('clipper-dock .card.ok:not([data-old]), clipper-dock .card.bad:not([data-old])');
   await page.locator(`${ANSWER} clipper-ribbon button`).click();
-  await done.nth(before).waitFor({ timeout: 15_000 });
-  const text = await done.nth(before).innerText();
+  await done.waitFor({ timeout: 15_000 });
+  const text = await done.innerText();
   assert.match(text, /^收藏失败\n[\s\S]*插件刚更新过，刷新这个页面后再收藏$/, text);
-  assert.equal(await done.nth(before).locator('li.on').count(), 0, '不该还有转圈的步骤');
+  assert.equal(await done.locator('li.on').count(), 0, '不该还有转圈的步骤');
 });
