@@ -9,7 +9,9 @@ export type RibbonState = 'idle' | 'busy' | 'done' | 'err';
 // 丝带吸顶时离滚动容器顶部的距离，避开 ChatGPT 顶栏（52px）
 const STICKY_TOP = 64;
 // 丝带画在回答左侧空白里，再往左会被 ChatGPT 外层容器裁掉
-const RIBBON_W = 16, RIBBON_LEFT = -(ANSWER_GUTTER - 1);
+const RIBBON_W = 18, RIBBON_LEFT = -(ANSWER_GUTTER - 1);
+// 丝带上的字都竖着写在丝带上，选中和整段都是斜纹「荧光笔」：选中蓝色往右下斜，整段紫色往右上斜（2026-11-04 用户选「丝带统一」A 版）；
+// 深色斜纹上的白字看不清，改成浅色斜纹配深色字（同日选「丝带清晰度」B 版），丝带加宽到 18px。
 // 往下拉丝带收藏整段对话（2026-11-04 用户选定「拉长书签」A 版）：往下移动超过 PULL_START 才算拉，不然算点击；
 // 拉过 PULL_READY 松手就收整段；丝带最长拉到 60 + PULL_MAX
 export const PULL_START = 6, PULL_READY = 100;
@@ -25,16 +27,14 @@ const RIBBON_CSS = `
 .rib.busy{background:#2f6bff;cursor:progress}
 .rib.done{background:#10a37f;opacity:.75}
 .rib.err{background:#d93025}
-.rib.pick{height:60px;opacity:1;background:repeating-linear-gradient(135deg,#2f6bff 0 5px,#7ea2ff 5px 10px)}
-.rib.pull{opacity:1;transition:none;cursor:grabbing}
-.rib.ready{background:#5b3df5}
-.vt{display:none;position:absolute;left:0;right:0;top:6px;writing-mode:vertical-rl;text-orientation:upright;color:#7a4b00;letter-spacing:1px;white-space:nowrap;
-  font:600 10.5px/16px -apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",sans-serif}
-.rib.long .vt{display:block}
-.rib.ready .vt{color:#fff}
-.pill{display:none;position:absolute;left:0;top:-24px;white-space:nowrap;padding:2px 9px;border-radius:999px;background:#fff;color:#2f6bff;border:1px solid #2f6bff;
-  box-shadow:0 3px 10px rgba(0,0,0,.12);font:11px/16px -apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",sans-serif}
-.rib.pick+.pill{display:block}`;
+.rib.pick{opacity:1;background:repeating-linear-gradient(135deg,#bcd2ff 0 5px,#dce7ff 5px 10px)}
+.rib.pull{opacity:1;transition:none;cursor:grabbing;background:repeating-linear-gradient(45deg,#ffd987 0 5px,#ffeabd 5px 10px)}
+.rib.ready{background:repeating-linear-gradient(45deg,#cdc2ff 0 5px,#e4ddff 5px 10px)}
+.vt{display:none;position:absolute;left:0;right:0;top:7px;writing-mode:vertical-rl;text-orientation:upright;color:#7a4b00;letter-spacing:1px;white-space:nowrap;
+  font:700 11.5px/${RIBBON_W}px -apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",sans-serif}
+.rib.long .vt,.rib.pick .vt{display:block}
+.rib.pick .vt{color:#1438b8}
+.rib.ready .vt{color:#3a1fc2}`;
 
 const DOCK_CSS = `
 :host{all:initial}
@@ -95,22 +95,23 @@ function shadowHost(tag: string, css: string): { host: HTMLElement; root: Shadow
 }
 
 /** 在回答里挂一条丝带（绝对定位在左侧空白处，不影响回答布局）。
- *  pick(n)：回答里选中了 n 块时丝带变成蓝色斜纹「荧光笔」，上方标签写块数，点它只收这几块（FR-12，用户 2026-11-04 选定 C 版样式）；n 为 0 恢复。
- *  按住往下拉：丝带跟着变长，拉过 PULL_READY 变紫、写「松手收藏整段」，松手调 onPull；不到位松手就弹回 */
+ *  pick(n)：回答里选中了 n 块时丝带拉长成浅蓝斜纹「荧光笔」，深蓝字竖着写「收藏选中·N块」，点它只收这几块（FR-12）；n 为 0 恢复。
+ *  按住往下拉：丝带跟着变长（浅琥珀斜纹「继续下拉」），拉过 PULL_READY 变浅紫斜纹、写「松手收藏整段」，松手调 onPull；不到位松手就弹回 */
 export function mountRibbon(answer: HTMLElement, onClick: () => void, onPull: () => void) {
   if (getComputedStyle(answer).position === 'static') answer.style.position = 'relative';
   const { host, root } = shadowHost('clipper-ribbon', RIBBON_CSS);
-  root.innerHTML += '<div class="st"><button class="rib" title="收藏这条回答" aria-label="收藏这条回答"><span class="vt"></span></button><div class="pill"></div></div>';
-  const btn = root.querySelector('button')!, pill = root.querySelector<HTMLElement>('.pill')!, vt = root.querySelector<HTMLElement>('.vt')!;
+  root.innerHTML += '<div class="st"><button class="rib" title="收藏这条回答" aria-label="收藏这条回答"><span class="vt"></span></button></div>';
+  const btn = root.querySelector('button')!, vt = root.querySelector<HTMLElement>('.vt')!;
   let state: RibbonState = 'idle', picked = 0, pull = -1;   // pull：往下拉了多少 px，没在拉是 -1
   const draw = () => {
     const on = btn.classList.contains('on');
+    const pick = picked > 0 && state !== 'busy', label = `收藏选中·${picked}块`;
     btn.className = pull >= 0 ? `rib pull ${pull >= PULL_READY ? 'ready' : ''} ${pull > 50 ? 'long' : ''}`
-      : `rib ${state !== 'idle' ? state : ''} ${picked && state !== 'busy' ? 'pick' : ''}`;
+      : `rib ${state !== 'idle' ? state : ''} ${pick ? 'pick' : ''}`;
     btn.classList.toggle('on', on);
-    btn.style.height = pull >= 0 ? `${60 + pull}px` : '';
-    vt.textContent = pull >= PULL_READY ? '松手收藏整段' : '继续下拉';
-    pill.textContent = `收藏选中 · ${picked} 块`;
+    // 选中时丝带拉长到放得下竖排字（每字约 13px）
+    btn.style.height = pull >= 0 ? `${60 + pull}px` : pick ? `${Math.max(104, 22 + label.length * 13)}px` : '';
+    vt.textContent = pull >= 0 ? (pull >= PULL_READY ? '松手收藏整段' : '继续下拉') : pick ? label : '';
     btn.title = picked ? `只收藏选中的 ${picked} 块` : '收藏这条回答';
     btn.setAttribute('aria-label', btn.title);
   };

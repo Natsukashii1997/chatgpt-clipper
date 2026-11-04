@@ -678,13 +678,15 @@ describe('只收选中段落（荧光笔丝带）', () => {
   });
   after(() => cp.close());
 
-  test('Claude：选中标题和第一段，丝带变荧光笔写「收藏选中 · 2 块」；点了只收这两块，选区还在，取消选择后丝带恢复', async () => {
+  test('Claude：选中标题和第一段，丝带拉长成荧光笔、竖着写「收藏选中·2块」；点了只收这两块，选区还在，取消选择后丝带恢复', async () => {
     const whole = Object.keys(await vault()).filter(d => !d.includes('（节选）'));
     const done = () => cp.locator(`${MSG} clipper-ribbon button.rib.done`).count(), wasDone = await done();
     await select(cp, `${MSG} .standard-markdown`, '快速排序示例', '带注释');
-    const pill = cp.locator(`${MSG} clipper-ribbon .pill`);
+    const label = cp.locator(`${MSG} clipper-ribbon .vt`);
     await cp.locator(`${MSG} clipper-ribbon button.rib.pick`).waitFor({ timeout: 2_000 });
-    assert.equal(await pill.innerText(), '收藏选中 · 2 块');
+    assert.equal(await label.innerText(), '收藏选中·2块');
+    await new Promise(r => setTimeout(r, 300));   // 等丝带拉长的过渡动画
+    assert.ok((await cp.locator(`${MSG} clipper-ribbon button`).boundingBox()).height >= 100, '选中时丝带该拉长，放得下竖排字');
     const card = await collect(cp, MSG);
     assert.match(card, /^已收藏\n/, card);
     assert.match(card, /📁\s+快速排序示例（节选）\n/);
@@ -693,7 +695,7 @@ describe('只收选中段落（荧光笔丝带）', () => {
 
     await cp.evaluate(() => getSelection().removeAllRanges());
     await cp.locator(`${MSG} clipper-ribbon button.rib.pick`).waitFor({ state: 'detached', timeout: 2_000 });
-    assert.ok(!(await pill.isVisible()), '取消选择后标签该收起');
+    assert.ok(!(await label.isVisible()), '取消选择后竖排字该收起');
     assert.equal(await done(), wasDone, '丝带恢复成选中之前的状态：节选不算整条已收藏');
 
     const v = await vault(), ex = Object.keys(v).filter(d => d.includes('（节选）'));
@@ -726,7 +728,7 @@ describe('只收选中段落（荧光笔丝带）', () => {
     let ex = Object.keys(await vault()).filter(d => d.includes('（节选）'));
     assert.equal(ex.length, 1, `同样几块应覆盖：${ex}`);
     await select(cp, `${MSG} .standard-markdown`, '判别式', '两个不等实根');
-    await cp.locator(`${MSG} clipper-ribbon .pill`).filter({ hasText: '收藏选中 · 3 块' }).waitFor({ timeout: 2_000 });
+    await cp.locator(`${MSG} clipper-ribbon .vt`).filter({ hasText: '收藏选中·3块' }).waitFor({ timeout: 2_000 });
     await collect(cp, MSG);
     ex = Object.keys(await vault()).filter(d => d.includes('（节选）'));
     assert.equal(ex.length, 2, `选了别的块应另存：${ex}`);
@@ -737,7 +739,7 @@ describe('只收选中段落（荧光笔丝带）', () => {
     const before = new Set(Object.keys(await vault()));
     await page.bringToFront();
     await select(page, ANSWER, '整理一个三人小团队', '要点 1.1');
-    await page.locator(`${ANSWER} clipper-ribbon .pill`).filter({ hasText: '收藏选中 · 2 块' }).waitFor({ timeout: 2_000 });
+    await page.locator(`${ANSWER} clipper-ribbon .vt`).filter({ hasText: '收藏选中·2块' }).waitFor({ timeout: 2_000 });
     const card = await collect(page, ANSWER);
     assert.match(card, /^已收藏\n/, card);
     const v = await vault(), d = Object.keys(v).find(k => !before.has(k));
