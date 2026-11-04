@@ -236,7 +236,8 @@ export function buildNote(n: { url: string; captured: Date; title: string; quest
   const quote = (n.question || '（没找到提问）').split('\n').map(l => (l.trim() ? `> ${l}` : '>')).join('\n');
   // 改版自检没过：标「可能不完整」，以后在 Obsidian 里搜 incomplete 找出来重收
   const warn = n.warn?.length ? `> [!warning] 可能不完整\n> ${n.warn.join('；')}，页面可能改版了。` : '';
-  return [front, warn, `> [!question]- 提问\n${quote}`, n.image ? '![[answer.png]]' : '', n.body].filter(Boolean).join('\n\n') + '\n';
+  // 链接带回答编号，点开后插件滚到这条回答（跳回原回答）
+  return [front, warn, `[↩ 打开原回答](${n.url})`, `> [!question]- 提问\n${quote}`, n.image ? '![[answer.png]]' : '', n.body].filter(Boolean).join('\n\n') + '\n';
 }
 
 /** 看不见的不转：display:none、visibility:hidden，以及 1×1 绝对定位的读屏文字。display:contents 的容器内容照常可见 */

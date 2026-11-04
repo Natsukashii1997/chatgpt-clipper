@@ -1,9 +1,10 @@
 import { answerChars, answerFingerprint, answerKey, answerQuestion, answerTitle, findAnswers, inChat, NOISE, SITE_NAME } from '@/lib/adapter';
 import { answerToMarkdown, buildNote, readCodeEditors, type CodeRead } from '@/lib/markdown';
 import type { DownloadFile, FailCode, Request, Response } from '@/lib/messages';
+import { clipHash, jumpToClip } from '@/lib/jump';
 import { folderName, noteName } from '@/lib/naming';
 import { embedResources, styler, takeSnapshot, toPng } from '@/lib/snapshot';
-import { mountRibbon, notice, progressCard, STEPS, UI_ATTR, type RibbonState, type Why } from '@/lib/ui';
+import { mountRibbon, notice, progressCard, STEPS, UI_ATTR, type Place, type RibbonState, type Why } from '@/lib/ui';
 
 export default defineContentScript({
   matches: ['https://chatgpt.com/*', 'https://claude.ai/*'],
@@ -34,7 +35,7 @@ export default defineContentScript({
   },
 });
 
-// 改版自检（2026-11-04 用户选定 A 版）：打开对话 10 秒后一条回答都没认出来，提醒一次（每个对话一次）
+// 进入对话页：带 #clip- 的（从笔记跳回）去找那条回答；改版自检（2026-11-04 用户选定 A 版）：打开 10 秒后一条回答都没认出来，提醒一次（每个对话一次）
 const CHECK_AFTER = 10_000;
 let watched = '', watchTimer = 0;
 const warned = new Set<string>();
@@ -43,6 +44,7 @@ function watchChat() {
   watched = location.href;
   clearTimeout(watchTimer);
   if (!inChat()) return;
+  void jumpToClip();
   const url = location.href;
   watchTimer = window.setTimeout(() => {
     if (location.href !== url || warned.has(url) || findAnswers().length) return;
@@ -116,14 +118,14 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
       // 回答本身很短（不到 20 字）不比字数
       const chars = body.replace(/\s+/g, '').length, few = pageChars >= 20 && chars < pageChars / 2;
       if (few) warns.push(chars ? `笔记只读到页面文字的 ${Math.round((chars / pageChars) * 100)}%` : '笔记没读到正文');
-      const md = buildNote({ url: `${location.origin}${location.pathname}`, captured: started, title, question: answerQuestion(el), body, image: files.length > 0, warn: warns });
+      const md = buildNote({ url: `${location.origin}${location.pathname}${clipHash(id)}`, captured: started, title, question: answerQuestion(el), body, image: files.length > 0, warn: warns });
       files.unshift({ name: noteName(title), url: `data:text/markdown;charset=utf-8,${encodeURIComponent(md)}` });
       card.step(2, few ? 'warn' : 'ok', `${body.length} 字`);
     } catch (e) {
       fail(2, 'MD 文件', e);
     }
     const partial = failed.length > 0;   // 快照、PNG 或 MD 没做成，存下来的不完整
-    let savedTo = '', firstId = 0, fix: FailCode | undefined, note = '', got = '', why: Why | undefined;
+    let savedTo = '', firstId = 0, fix: FailCode | undefined, note = '', got = '', why: Why | undefined, open: Place['open'];
     if (files.length) {
       card.step(3, 'on');
       const folder = folderName(title, started);
@@ -131,7 +133,12 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
       if (res?.ok) {
         savedTo = res.path ?? '';
         note = res.moved ? '已收藏过' : res.updated ? '已更新' : '已存入';
-        if (!res.moved && files[0]?.name.endsWith('.md')) why = { value: res.why ?? '', save: w => send({ type: 'why', id, why: w }).then(() => undefined) };
+        if (!res.moved && files[0]?.name.endsWith('.md')) {
+          why = { value: res.why ?? '', save: w => send({ type: 'why', id, why: w }).then(() => undefined) };
+          // 点绿块在 Obsidian 里打开；没设置位置时点了去设置页
+          open = res.open ? { label: '在 Obsidian 里打开 ↗', href: res.open, run: () => openLink(res.open!) }
+            : { label: '设置 Obsidian 位置后可直接打开 ↗', run: () => void send({ type: 'options' }) };
+        }
         card.step(3, 'ok', note);
       } else {
         // 写不进 Vault：退回浏览器下载，并说明原因（FR-5）。没选 Vault 文件夹（比如没装 Obsidian）只下载长图（2026-11-03 用户决定）
@@ -157,8 +164,8 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
       const warn = warns.length > 0 && note !== '已收藏过';
       card.finish(true, note === '已收藏过' ? '已收藏过' : warn ? '已收藏，但可能不完整' : note === '已更新' ? '已更新' : '已收藏', note === '已收藏过'
         ? { icon: '📁', head: name, sub: `原文件夹已不在「${dir}」里（可能整理走了），这次没有重写` }
-        : warn ? { icon: '⚠️', head: warns.join('；'), sub: '页面可能改版了，能存的部分已存好', warn }
-        : { icon: '📁', head: name, sub: [date, dir].filter(Boolean).join(' · ') }, undefined, warn ? 0 : 8000, why);
+        : warn ? { icon: '⚠️', head: warns.join('；'), sub: '页面可能改版了，能存的部分已存好', warn, open }
+        : { icon: '📁', head: name, sub: [date, dir].filter(Boolean).join(' · '), open }, undefined, warn ? 0 : 8000, why);
     } else {
       setRibbon('err');
       const headline = savedTo ? '已收藏（不完整）' : !firstId ? '收藏失败'
@@ -168,9 +175,22 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
         : { label: '重试', run: () => { card.close(); busy.delete(el); void capture(el, setRibbon); } };
       card.finish(false, headline, { icon: savedTo ? '📁' : firstId ? '⬇️' : '⚠️', head: name, sub: failed.join('；') }, action);
     }
+  } catch (e) {
+    // 插件刷新后没刷新页面：页面里还是旧脚本，和后台断了联系，发消息直接抛错（不走 .catch）
+    console.error('[chatgpt-clipper] 收藏中断', e);
+    setRibbon('err');
+    card.finish(false, '收藏失败', { icon: '⚠️', head: title || '这条回答',
+      sub: browser.runtime?.id ? (e instanceof Error ? e.message : String(e)) : '插件刚更新过，刷新这个页面后再收藏' });
   } finally {
     busy.delete(el);
   }
+}
+
+/** 打开 obsidian:// 链接：浏览器第一次会问要不要打开 Obsidian */
+function openLink(url: string) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.click();
 }
 
 async function send(msg: Request): Promise<Extract<Response, { ok: true }>> {

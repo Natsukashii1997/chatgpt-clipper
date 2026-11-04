@@ -1,9 +1,10 @@
 // 设置页：选一次 Vault 里的目标文件夹，句柄存 IndexedDB；授权失效时在这里重新授权（后台不能弹授权窗口）。
 // 浏览器不给完整路径，只能显示文件夹名。
-import { dirState, loadDir, saveDir, type DirState } from '@/lib/vault';
+import { dirState, loadDir, loadWhere, saveDir, saveWhere, type DirState } from '@/lib/vault';
 
 const $ = (id: string) => document.getElementById(id)!;
 const cur = $('cur'), pick = $('pick') as HTMLButtonElement, reauth = $('reauth') as HTMLButtonElement, msg = $('msg');
+const where = $('where') as HTMLInputElement, whereMsg = $('whereMsg');
 
 const MESSAGES: Record<DirState, string> = {
   none: '还没选文件夹，收藏会退回到浏览器下载目录。',
@@ -38,4 +39,18 @@ reauth.addEventListener('click', async () => {
   await render();
 });
 
+// 最后一段应是上面选的文件夹名，不一样多半是填错了
+async function checkWhere(saved: boolean) {
+  const dir = await loadDir(), v = where.value.trim(), last = v.split('/').filter(Boolean).at(-1);
+  const off = !!(v && dir && last !== dir.name);
+  whereMsg.className = off ? 'warn' : saved && v ? 'ok' : '';
+  whereMsg.textContent = off ? `最后一段应该是上面选的文件夹「${dir!.name}」` : saved ? (v ? '✓ 已保存' : '已清空，点绿色横条不会打开 Obsidian') : '';
+}
+
+where.addEventListener('change', async () => {
+  await saveWhere(where.value);
+  await checkWhere(true);
+});
+
 void render();
+void loadWhere().then(v => { where.value = v; void checkWhere(false); });

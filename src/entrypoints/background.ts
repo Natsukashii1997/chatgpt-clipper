@@ -1,5 +1,5 @@
 import { DOWNLOAD_ROOT, type Request, type Response } from '@/lib/messages';
-import { dirState, getSaved, loadDir, saveCollection, saveWhy } from '@/lib/vault';
+import { dirState, getSaved, loadDir, loadWhere, obsidianUrl, saveCollection, saveWhy } from '@/lib/vault';
 
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener((msg: Request, _sender, reply: (r: Response) => void) => {
@@ -19,7 +19,9 @@ async function handle(msg: Request): Promise<Response> {
     }
     const files = await Promise.all(msg.files.map(async f => ({ name: f.name, data: await (await fetch(f.url)).blob() })));
     const r = await saveCollection(dir, msg.id, msg.folder, files);
-    return { ok: true, path: `${dir.name}/${r.name}`, updated: r.updated, moved: r.moved, why: r.why };
+    const where = await loadWhere(), note = files.find(f => f.name.endsWith('.md'))?.name;
+    return { ok: true, path: `${dir.name}/${r.name}`, updated: r.updated, moved: r.moved, why: r.why,
+      open: where && note && !r.moved ? obsidianUrl(where, r.name, note) : '' };
   }
   if (msg.type === 'saved') {
     const hit = await Promise.all(msg.ids.map(getSaved));

@@ -34,6 +34,19 @@ function idb<T>(mode: IDBTransactionMode, run: (s: IDBObjectStore) => IDBRequest
 
 export const loadDir = () => idb<FileSystemDirectoryHandle | undefined>('readonly', s => s.get(KEY));
 
+// 收藏文件夹在 Obsidian 里的位置「Vault 名/在 Vault 里的路径」：浏览器不给完整路径，由用户在设置页填一次，
+// 用来生成在 Obsidian 里打开笔记的链接（2026-11-04 用户选定：点进度卡绿块打开，A 版）
+const WHERE = 'obsidianPath';
+export const loadWhere = async () => (await idb<string | undefined>('readonly', s => s.get(WHERE))) ?? '';
+export const saveWhere = (v: string) => idb('readwrite', s => s.put(v.trim(), WHERE));
+
+/** obsidian://open 链接：vault 用名字，file 是从 Vault 根开始的路径（.md 可省） */
+export function obsidianUrl(where: string, folder: string, note: string): string {
+  const [vault = '', ...rest] = where.split('/').map(s => s.trim()).filter(Boolean);
+  const file = [...rest, folder, note.replace(/\.md$/, '')].join('/');
+  return `obsidian://open?vault=${encodeURIComponent(vault)}&file=${encodeURIComponent(file)}`;
+}
+
 /** 换成另一个文件夹时清掉「已收藏」清单（清单里的文件夹名只对原文件夹有效）；重选同一个文件夹不清 */
 export async function saveDir(h: FileSystemDirectoryHandle) {
   const old = await loadDir();

@@ -17,6 +17,10 @@ button.primary{background:#1f1f1f;color:#fff;border-color:#1f1f1f}
 button[hidden]{display:none}
 #msg{margin:12px 2px 0;color:#6b6b6b;font-size:13px}
 #msg.warn{color:#b45309}
+h1.next{margin-top:44px}
+#where{flex:1;font:inherit;border:0;outline:none;background:transparent;min-width:0}
+#whereMsg{margin:12px 2px 0;color:#6b6b6b;font-size:13px}
+#whereMsg.ok{color:#10a37f}#whereMsg.warn{color:#b45309}
 </style>
 </head>
 <body>
@@ -29,6 +33,11 @@ button[hidden]{display:none}
     <button id="pick">选择文件夹</button>
   </div>
   <p id="msg"></p>
+
+  <h1 class="next">在 Obsidian 里打开</h1>
+  <p class="hint">填上面这个文件夹在 Obsidian 里的位置：第一段是 Vault 的名字，后面是它在 Vault 里的路径。填好后，收藏完点进度卡上的绿色横条，就能在 Obsidian 里打开这篇笔记。</p>
+  <div class="row"><input id="where" placeholder="例如：Obsidian Vault/00 待整理/ChatGPT收藏"></div>
+  <p id="whereMsg"></p>
 </main>
 <script type="module" src="./main.ts"></script>
 </body>

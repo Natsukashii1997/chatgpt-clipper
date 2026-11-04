@@ -45,7 +45,12 @@ li small{display:block;color:#6b6b6b;font-size:10px}
 .loc .k{font-size:15px;flex:none}
 .loc .v{flex:1;min-width:0}
 .loc .v div:first-child{font-weight:600}
-.loc .v div:last-child{color:#6b6b6b;overflow-wrap:anywhere}
+.loc .v div:nth-child(2){color:#6b6b6b;overflow-wrap:anywhere}
+.loc.link{cursor:pointer}
+.loc.link:hover{background:#d5efe6;box-shadow:inset 0 0 0 1px #9fd8c5}
+.loc.link .v .go{display:none;color:#10a37f;font-weight:600}
+.loc.link:hover .v .sub{display:none}
+.loc.link:hover .v .go{display:block}
 button.a{font:inherit;border:1px solid #0d0d0d;background:#0d0d0d;color:#fff;border-radius:7px;padding:3px 10px;cursor:pointer;flex:none}
 button.a:hover{background:#333}
 .why{margin-top:10px}
@@ -102,8 +107,9 @@ function dock(): HTMLElement {
 export type StepState = '' | 'on' | 'ok' | 'warn' | 'bad';
 const ICON: Record<StepState, string> = { '': '', on: '', ok: '✓', warn: '!', bad: '!' };
 
-/** 结束时底部的「存到哪里」：图标、第一行（收藏文件夹或结果）、第二行（子文件夹或原因）；warn 存下了但改版自检没过，标黄 */
-export interface Place { icon: string; head: string; sub: string; warn?: boolean }
+/** 结束时底部的「存到哪里」：图标、第一行（收藏文件夹或结果）、第二行（子文件夹或原因）；warn 存下了但改版自检没过，标黄；
+ *  open 整块可点（在 Obsidian 里打开），悬停时第二行换成 label；href 是要打开的链接（记在块上，便于排查） */
+export interface Place { icon: string; head: string; sub: string; warn?: boolean; open?: { label: string; href?: string; run: () => void } }
 
 /** 右下角一张进度卡（B 版，用户 2026-11-02 选定）：顶部是收藏状态，四步横排成一条进度线，每步下面一个短结果；结束时给「存到哪里」和操作按钮 */
 export function progressCard() {
@@ -123,14 +129,24 @@ export function progressCard() {
     step(i: number, state: StepState, note = '') { states[i] = state; notes[i] = note; draw(); },
     finish(ok: boolean, status: string, place: Place, action?: { label: string; run: () => void }, autoCloseMs = 0, why?: Why) {
       headline = status;
+      if (!ok) states.forEach((st, i) => { if (st === 'on') states[i] = 'bad'; });   // 没做完的那步算失败，不再转圈
       draw();
       el.classList.add(ok ? 'ok' : 'bad');
-      el.insertAdjacentHTML('beforeend', `<div class="loc ${place.warn ? 'warn' : ok ? 'ok' : 'bad'}"><span class="k"></span><div class="v"><div></div><div></div></div></div>`);
+      el.insertAdjacentHTML('beforeend', `<div class="loc ${place.warn ? 'warn' : ok ? 'ok' : 'bad'}"><span class="k"></span><div class="v"><div></div><div class="sub"></div></div></div>`);
       const loc = el.querySelector('.loc')!, [head, sub] = loc.querySelectorAll('.v div');
       loc.querySelector('.k')!.textContent = place.icon;
       head!.textContent = place.head;
       sub!.textContent = place.sub;
       if (!place.sub) sub!.remove();
+      if (place.open) {
+        const go = document.createElement('div');
+        go.className = 'go';
+        go.textContent = place.open.label;
+        loc.querySelector('.v')!.appendChild(go);
+        loc.classList.add('link');
+        if (place.open.href) (loc as HTMLElement).dataset.href = place.open.href;
+        loc.addEventListener('click', place.open.run);
+      }
       if (action) {
         const b = document.createElement('button');
         b.className = 'a';
@@ -200,6 +216,20 @@ function whyBox(card: HTMLElement, why: Why, typing: (t: boolean) => void) {
   };
   if (value) said();
   else edit(false);
+}
+
+/** 跳回原回答（2026-11-04 用户改选 C 版：开头一抹淡黄）：回答开头铺一层很淡的黄色、往下渐隐，没有边框；
+ *  丝带同时变黄，停一下一起淡回去 */
+export function flashAnswer(answer: HTMLElement) {
+  if (getComputedStyle(answer).position === 'static') answer.style.position = 'relative';
+  const { host } = shadowHost('clipper-flash', '');
+  host.style.cssText = 'position:absolute;left:-10px;right:-6px;top:-6px;height:150px;border-radius:10px;pointer-events:none;z-index:1;'
+    + 'background:linear-gradient(to bottom,rgba(255,176,32,.16),rgba(255,176,32,0))';
+  answer.appendChild(host);
+  const timing = { duration: 2600, easing: 'ease-out' };
+  host.animate([{ opacity: 0 }, { opacity: 1, offset: 0.15 }, { opacity: 1, offset: 0.6 }, { opacity: 0 }], timing).onfinish = () => host.remove();
+  answer.querySelector(':scope > clipper-ribbon')?.shadowRoot?.querySelector('.rib')
+    ?.animate([{ background: '#ffb020', opacity: 1 }, { background: '#ffb020', opacity: 1, offset: 0.65 }, {}], timing);
 }
 
 /** 右下角一条黄色提醒，点 ✕ 关（改版自检：丝带一条都没挂上） */

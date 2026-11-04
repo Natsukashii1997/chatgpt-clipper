@@ -300,7 +300,7 @@ test('长图里代码框展开：120 行都画出来，可横向滚动的块不�
 
 test('笔记：frontmatter、折叠的提问、嵌入长图', () => {
   const m = md();
-  assert.match(m, /^---\nsource: chatgpt\nurl: https:\/\/chatgpt\.com\/c\/fixture\ncaptured: \d{4}-\d{2}-\d{2} \d{2}:\d{2}\ntitle: "一、目标与范围"\ntags: \[chatgpt收藏\]\n---\n\n/);
+  assert.match(m, /^---\nsource: chatgpt\nurl: https:\/\/chatgpt\.com\/c\/fixture#clip-[0-9a-f]{10}\ncaptured: \d{4}-\d{2}-\d{2} \d{2}:\d{2}\ntitle: "一、目标与范围"\ntags: \[chatgpt收藏\]\n---\n\n\[↩ 打开原回答\]\(https:\/\/chatgpt\.com\/c\/fixture#clip-[0-9a-f]{10}\)\n\n> \[!question\]/);
   assert.match(m, /\n> \[!question\]- 提问\n> 帮我设计一个小团队的周度工作节奏\n\n!\[\[answer\.png\]\]\n\n## 一、目标与范围\n/);
 });
 
@@ -430,7 +430,7 @@ describe('Claude 网页版', () => {
 
   test('笔记：来源 claude，提问取自用户消息，正文按 Markdown 结构输出', () => {
     const n = c.note;
-    assert.match(n, /^---\nsource: claude\nurl: https:\/\/claude\.ai\/chat\/fixture\n/);
+    assert.match(n, /^---\nsource: claude\nurl: https:\/\/claude\.ai\/chat\/fixture#clip-[0-9a-f]{10}\n/);
     assert.match(n, /\ntags: \[claude收藏\]\n/);
     assert.match(n, /> \[!question\]- 提问\n> 用 Python 写一个快速排序，再给一张表和公式。\n/);
     assert.match(n, /\n## 快速排序示例\n/);
@@ -491,7 +491,7 @@ describe('Claude 网页版', () => {
     assert.match(await card.locator('.said').innerText(), /^下周写方案 用\s*改$/);
     let n = await note();
     assert.match(n, /\ntitle: "快速排序示例"\nwhy: "下周写方案 用"\n/);
-    assert.match(n, /\n---\n\n> \[!note\] 为什么存\n> 下周写方案 用\n\n> \[!question\]- 提问\n/);
+    assert.match(n, /\n---\n\n> \[!note\] 为什么存\n> 下周写方案 用\n\n\[↩ 打开原回答\]\(.+\)\n\n> \[!question\]- 提问\n/);
     assert.ok(n.includes('![[answer.png]]'), '补写不该动长图的嵌入');
 
     // 在 Obsidian 里手改成不带引号的，再收藏：沿用手改的那句，卡片直接显示
@@ -513,7 +513,7 @@ describe('Claude 网页版', () => {
     await write(card, '');
     for (let i = 0; i < 25 && /why:/.test(n = await note()); i++) await new Promise(r => setTimeout(r, 200));
     assert.doesNotMatch(n, /why:|为什么存/);
-    assert.match(n, /\n---\n\n> \[!question\]- 提问\n/);
+    assert.match(n, /\n---\n\n\[↩ 打开原回答\]\(.+\)\n\n> \[!question\]- 提问\n/);
   });
 
   test('改版自检：笔记读到的字不到页面一半、长图不到页面一半高，照样存下、标黄，笔记标 incomplete', async () => {
@@ -549,7 +549,7 @@ describe('Claude 网页版', () => {
     assert.match(await card.locator('.loc.warn').innerText(), /^⚠️\s+笔记只读到页面文字的 \d+%\n页面可能改版了，能存的部分已存好$/);
     assert.ok(await card.locator('.why input, .said').count(), '标黄时也能写一句');
     let n = (await notes()).find(t => t.includes('incomplete'));
-    assert.match(n, /\ntags: \[claude收藏\]\nincomplete: true\n---\n\n> \[!warning\] 可能不完整\n> 笔记只读到页面文字的 \d+%，页面可能改版了。\n\n> \[!question\]- 提问\n/);
+    assert.match(n, /\ntags: \[claude收藏\]\nincomplete: true\n---\n\n> \[!warning\] 可能不完整\n> 笔记只读到页面文字的 \d+%，页面可能改版了。\n\n\[↩ 打开原回答\]\(.+\)\n\n> \[!question\]- 提问\n/);
 
     // 正文被认成要去掉的界面行（按钮行）：长图只剩 Artifact 卡片那一条
     await cp.locator(MSG).evaluate((el, html) => { el.innerHTML = html; }, html);
@@ -561,6 +561,72 @@ describe('Claude 网页版', () => {
     assert.equal(await card.locator('li.warn', { hasText: 'PNG 文件' }).count(), 1);
     assert.match(await card.locator('.loc.warn').innerText(), /长图只有页面高度的 \d+%/);
     await cp.locator(MSG).evaluate((el, html) => { el.innerHTML = html; }, html);
+  });
+
+  test('跳回原回答：笔记链接带编号；长对话里回答没渲染时往上翻着找，找到后滚过去闪黄光；找不到就提示', async () => {
+    const hash = c.note.match(/^url: .*(#clip-[0-9a-f]{10})$/m)[1];
+    assert.ok(c.note.includes(`[↩ 打开原回答](${CLAUDE_URL}${hash})`));
+    const p = await ctx.newPage();
+    // 模拟 Claude 只渲染屏幕附近的行：底下垫一段长内容和后面的另一条回答、先滚到底，滚到靠上之前要找的那一行不在页面里
+    await p.addInitScript(() => document.addEventListener('DOMContentLoaded', () => {
+      const sc = document.querySelector('.scroller'), row = document.querySelector('[data-index="1"]'), parent = row.parentElement;
+      const later = row.cloneNode(true);
+      later.dataset.index = '9';
+      later.querySelector('.standard-markdown').textContent = '后面的另一条回答';
+      parent.insertAdjacentHTML('beforeend', '<div style="height:4000px"></div>');
+      parent.append(later);
+      row.remove();
+      sc.scrollTop = sc.scrollHeight;
+      sc.addEventListener('scroll', () => { if (sc.scrollTop < 300 && !row.isConnected) parent.insertBefore(row, parent.children[1]); });
+    }));
+    await p.goto(CLAUDE_URL + hash);
+    await p.locator(`[data-index="1"] ${MSG} clipper-flash`).waitFor({ state: 'attached', timeout: 10_000 });
+    const r = await p.locator(`[data-index="1"] ${MSG}`).evaluate(el => { const b = el.getBoundingClientRect(); return { top: b.top, h: innerHeight }; });
+    assert.ok(r.top >= 0 && r.top < 200, `应滚到回答开头：${JSON.stringify(r)}`);
+    await p.locator('clipper-flash').waitFor({ state: 'detached', timeout: 5_000 });
+    await p.close();
+
+    const miss = await ctx.newPage();
+    await miss.goto(CLAUDE_URL + '#clip-0000000000');
+    await miss.locator('clipper-dock .toast').waitFor({ timeout: 8_000 });
+    assert.match(await miss.locator('clipper-dock .toast').innerText(), /没找到收藏的那条回答/);
+    await miss.close();
+  });
+
+  test('点进度卡绿块在 Obsidian 里打开：没设置位置时悬停提示并打开设置页；设置后打开 obsidian:// 链接', async () => {
+    const sw = ctx.serviceWorkers()[0];
+    const kv = (op, v) => sw.evaluate(([op, v]) => new Promise((resolve, reject) => {
+      const o = indexedDB.open('chatgpt-clipper', 1);
+      o.onsuccess = () => { const tx = o.result.transaction('kv', 'readwrite'), st = tx.objectStore('kv'); op === 'put' ? st.put(v, 'obsidianPath') : st.delete('obsidianPath'); tx.oncomplete = resolve; tx.onerror = reject; };
+    }), [op, v]);
+    // 先给已有的卡片打记号再收藏：旧卡片会 8 秒后自动关，按个数找新卡片会对不上
+    const collect = async () => {
+      await cp.locator('clipper-dock .card').evaluateAll(cs => cs.forEach(c => c.setAttribute('data-old', '')));
+      await cp.locator(`${MSG} clipper-ribbon button`).click();
+      const card = cp.locator('clipper-dock .card:not([data-old])').filter({ has: cp.locator('.loc') });
+      await card.waitFor({ timeout: 30_000 });
+      return card.locator('.loc');
+    };
+
+    let loc = await collect();
+    assert.match(await loc.innerText(), /^📁\s+快速排序示例\n\d{4}-\d{2}-\d{2}$/, '平时和以前一样');
+    await loc.hover();
+    assert.match(await loc.innerText(), /设置 Obsidian 位置后可直接打开 ↗$/);
+    const [opt] = await Promise.all([ctx.waitForEvent('page'), loc.click()]);
+    await opt.waitForLoadState();
+    assert.match(opt.url(), /^chrome-extension:\/\/.+\/options\.html$/);
+    await opt.close();
+
+    await kv('put', 'Obsidian Vault/00 待整理/ChatGPT收藏');
+    loc = await collect();
+    await loc.hover();
+    assert.match(await loc.innerText(), /在 Obsidian 里打开 ↗$/);
+    // 无界面的浏览器不会真的去打开 Obsidian，这里核对块上记的链接
+    const href = await loc.getAttribute('data-href');
+    assert.match(href, /^obsidian:\/\/open\?vault=Obsidian%20Vault&file=/);
+    assert.match(decodeURIComponent(href.split('&file=')[1]), /^00 待整理\/ChatGPT收藏\/\d{4}-\d{2}-\d{2} 快速排序示例\/快速排序示例$/);
+    await loc.click();
+    await kv('delete');
   });
 
   test('改版自检：对话页 10 秒后一条回答都没认出来，右下角提醒一次；正常页面不提醒', async () => {
@@ -577,3 +643,15 @@ describe('Claude 网页版', () => {
   });
 });
 
+// 放在最后：会重新加载插件
+test('插件刷新后没刷新页面：收藏提示「刷新这个页面」，不一直卡在入库', async () => {
+  await ctx.serviceWorkers()[0].evaluate(() => chrome.runtime.reload()).catch(() => {});
+  await new Promise(r => setTimeout(r, 1000));
+  const done = page.locator('clipper-dock .card.ok, clipper-dock .card.bad');
+  const before = await done.count();
+  await page.locator(`${ANSWER} clipper-ribbon button`).click();
+  await done.nth(before).waitFor({ timeout: 15_000 });
+  const text = await done.nth(before).innerText();
+  assert.match(text, /^收藏失败\n[\s\S]*插件刚更新过，刷新这个页面后再收藏$/, text);
+  assert.equal(await done.nth(before).locator('li.on').count(), 0, '不该还有转圈的步骤');
+});
