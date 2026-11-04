@@ -15,6 +15,8 @@ const FIXTURE = fs.readFileSync(path.join(ROOT, 'tests/fixtures/card-answer.html
 const URL = 'https://chatgpt.com/c/fixture';
 const CLAUDE_FIXTURE = fs.readFileSync(path.join(ROOT, 'tests/fixtures/claude-answer.html'), 'utf8');
 const CLAUDE_URL = 'https://claude.ai/chat/fixture', CLAUDE_BROKEN_URL = 'https://claude.ai/chat/broken';
+// 多轮对话，虚拟列表（整段收藏用）
+const THREAD_FIXTURE = fs.readFileSync(path.join(ROOT, 'tests/fixtures/claude-thread.html'), 'utf8'), THREAD_URL = 'https://claude.ai/chat/thread';
 // 第十节的外部资源：字体与页面同源；图片跨域且不带 CORS 头，和真实页面的 images.openai.com 一样内容脚本读不到
 const FONT_URL = 'https://chatgpt.com/cdn/assets/TestFont.ttf', FONT = fs.readFileSync('/System/Library/Fonts/Supplemental/Zapfino.ttf');
 const IMAGE_URL = 'https://images.openai.com/fixture/bridge.svg';
@@ -41,6 +43,7 @@ before(async () => {
     const url = route.request().url();
     if (url.startsWith(URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: FIXTURE });
     if (url.startsWith(CLAUDE_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: CLAUDE_FIXTURE });
+    if (url.startsWith(THREAD_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: THREAD_FIXTURE });
     // 模拟 Claude 改版：回答换了标记，插件认不出
     if (url.startsWith(CLAUDE_BROKEN_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: CLAUDE_FIXTURE.replaceAll('data-testid="assistant-message"', 'data-testid="assistant-turn"') });
     if (url === FONT_URL) return route.fulfill({ contentType: 'font/ttf', body: FONT });
@@ -101,6 +104,18 @@ before(async () => {
 });
 
 /** 测试里弹不出选目录窗口：用扩展自己的私有存储区（OPFS）目录代替 Vault，按设置页的存法放进 IndexedDB */
+// 点丝带收藏，等新出现的进度卡收尾。旧卡片 8 秒后自动关，按张数找新卡片会对不上（收藏一慢就超时）：先给旧卡片打记号，新卡片打上编号返回
+let cardNo = 0;
+async function collectCard(pg, ribbon) {
+  await pg.locator('clipper-dock .card').evaluateAll(cs => cs.forEach(c => c.setAttribute('data-old', '')));
+  await pg.locator(ribbon).click();
+  const card = pg.locator('clipper-dock .card.ok:not([data-old]), clipper-dock .card.bad:not([data-old])').first();
+  await card.waitFor({ timeout: 30_000 });
+  const no = String(++cardNo);
+  await card.evaluate((c, no) => c.setAttribute('data-no', no), no);
+  return pg.locator(`clipper-dock .card[data-no="${no}"]`);
+}
+
 async function setVault(sw) {
   await sw.evaluate(async () => {
     const dir = await navigator.storage.getDirectory();
@@ -144,13 +159,7 @@ test('选了文件夹就写进去；同一条再收藏就覆盖；刷新后丝�
     }
     return out;
   });
-  const collect = async () => {
-    const done = page.locator('clipper-dock .card.ok, clipper-dock .card.bad');
-    const before = await done.count();
-    await page.locator(`${ANSWER} clipper-ribbon button`).click();
-    await done.nth(before).waitFor({ timeout: 30_000 });
-    return done.nth(before).innerText();
-  };
+  const collect = async () => (await collectCard(page, `${ANSWER} clipper-ribbon button`)).innerText();
 
   const first = await collect();
   let t = await tree(), names = Object.keys(t);
@@ -206,13 +215,7 @@ test('标题变了（如命名规则调整）：只有插件写的文件就改�
     }
     return out;
   });
-  const collect = async () => {
-    const done = page.locator('clipper-dock .card.ok, clipper-dock .card.bad');
-    const before = await done.count();
-    await page.locator(`${ANSWER} clipper-ribbon button`).click();
-    await done.nth(before).waitFor({ timeout: 30_000 });
-    return done.nth(before).innerText();
-  };
+  const collect = async () => (await collectCard(page, `${ANSWER} clipper-ribbon button`)).innerText();
 
   assert.ok(await legacy('2026-10-01 一、目标', ['一、目标.md']));
   assert.match(await collect(), /入库\s+已更新/);
@@ -363,11 +366,7 @@ test('正文：回答里看得见的文字全部保留（FR-4）', async () => {
 });
 
 test('回答没有标题时用提问当标题，最多 30 字（M1 验收 P12）', async () => {
-  const done = page.locator('clipper-dock .card.ok, clipper-dock .card.bad');
-  const before = await done.count();
-  await page.locator('[data-chatgpt-search-unit-key="fallback-turn-4:1:assistant"] clipper-ribbon button').click();
-  await done.nth(before).waitFor({ timeout: 30_000 });
-  const card = await done.nth(before).innerText();
+  const card = await (await collectCard(page, '[data-chatgpt-search-unit-key="fallback-turn-4:1:assistant"] clipper-ribbon button')).innerText();
   assert.match(card, /\n简短一点\n/);
   assert.doesNotMatch(card, /简版：/);
 });
@@ -467,13 +466,7 @@ describe('Claude 网页版', () => {
       for await (const [, h] of (await navigator.storage.getDirectory()).entries())
         for await (const [f, fh] of h.entries()) if (f.endsWith('.md')) return (await fh.getFile()).text();
     });
-    const collect = async () => {
-      const done = cp.locator('clipper-dock .card.ok, clipper-dock .card.bad');
-      const before = await done.count();
-      await cp.locator(`${MSG} clipper-ribbon button`).click();
-      await done.nth(before).waitFor({ timeout: 30_000 });
-      return done.nth(before);
-    };
+    const collect = () => collectCard(cp, `${MSG} clipper-ribbon button`);
     const write = async (card, text) => {
       await card.locator('.why input').fill(text);
       await card.locator('.why input').press('Enter');
@@ -524,13 +517,7 @@ describe('Claude 网页版', () => {
         for await (const [f, fh] of h.entries()) if (f.endsWith('.md')) out.push(await (await fh.getFile()).text());
       return out;
     });
-    const collect = async () => {
-      const done = cp.locator('clipper-dock .card.ok, clipper-dock .card.bad');
-      const before = await done.count();
-      await cp.locator(`${MSG} clipper-ribbon button`).click();
-      await done.nth(before).waitFor({ timeout: 30_000 });
-      return done.nth(before);
-    };
+    const collect = () => collectCard(cp, `${MSG} clipper-ribbon button`);
     // 原样还原用：去掉丝带（还原后由插件重新挂）
     const html = await cp.locator(MSG).evaluate(el => { const c = el.cloneNode(true); c.querySelector('clipper-ribbon')?.remove(); return c.innerHTML; });
 
@@ -763,6 +750,139 @@ describe('只收选中段落（荧光笔丝带）', () => {
     for (const s of ['## 一、目标与范围', '先确认输入', '二、角色分工', '事项 1'])
       assert.ok(!n.includes(s), `节选笔记里不该有「${s}」`);
     await page.evaluate(() => getSelection().removeAllRanges());
+  });
+});
+
+describe('整段收藏（拉长书签）', () => {
+  const MSG = '[data-testid="assistant-message"]';
+  let sw, tp;
+  // 按住丝带往下拉 dy 像素；release 为 false 时不松手
+  const pull = async (pg, rib, dy, release = true) => {
+    const b = await rib.boundingBox(), x = b.x + b.width / 2, y = b.y + 10;
+    await pg.mouse.move(x, y);
+    await pg.mouse.down();
+    await pg.mouse.move(x, y + dy, { steps: 10 });
+    if (release) await pg.mouse.up();
+  };
+  const mark = pg => pg.locator('clipper-dock .card').evaluateAll(cs => cs.forEach(c => c.setAttribute('data-old', '')));
+  const fresh = pg => pg.locator('clipper-dock .card:not([data-old])');
+  const scrollTop = () => tp.locator('.scroller').evaluate(e => e.scrollTop);
+  // Vault 里的整段收藏文件夹：文件夹名 → { 文件名: 笔记文本，或长图的 [宽, 高]（测试自己写的小文件为空数组） }
+  const threads = () => sw.evaluate(async () => {
+    const out = {};
+    for await (const [d, h] of (await navigator.storage.getDirectory()).entries()) {
+      if (!d.endsWith('（整段）')) continue;
+      out[d] = {};
+      for await (const [f, fh] of h.entries()) {
+        const file = await fh.getFile();
+        if (f.endsWith('.md')) out[d][f] = await file.text();
+        else if (file.size >= 24) { const v = new DataView(await file.arrayBuffer()); out[d][f] = [v.getUint32(16), v.getUint32(20)]; }
+        else out[d][f] = [];
+      }
+    }
+    return out;
+  });
+  const done = async pg => {
+    const card = fresh(pg).filter({ has: pg.locator('.loc') });
+    await card.waitFor({ timeout: 60_000 });
+    return card.innerText();
+  };
+
+  before(async () => {
+    sw = ctx.serviceWorkers()[0];
+    await setVault(sw);
+    tp = await ctx.newPage();
+    await tp.goto(THREAD_URL);
+    await tp.locator(`${MSG} clipper-ribbon`).first().waitFor({ state: 'attached' });
+  });
+  after(() => tp.close());
+
+  test('拉不到 100px：丝带跟着变长、不变紫；松手弹回，不收藏', async () => {
+    await mark(tp);
+    const rib = tp.locator(`${MSG} clipper-ribbon button`).last();
+    await pull(tp, rib, 60, false);
+    const h = (await rib.boundingBox()).height;
+    assert.ok(h >= 115 && h <= 125, `丝带该拉长到约 120px，实际 ${h}`);
+    assert.equal(await rib.evaluate(b => b.classList.contains('ready')), false);
+    await tp.mouse.up();
+    await new Promise(r => setTimeout(r, 400));
+    assert.ok((await rib.boundingBox()).height <= 60, '松手后该弹回');
+    await new Promise(r => setTimeout(r, 600));
+    assert.equal(await fresh(tp).count(), 0, '没拉到位不该收藏');
+  });
+
+  test('拉过 100px 变紫、写「松手收藏整段」；松手后从头读到尾（进度卡「正在读第 k 条」）、滚回原位；存成一个文件夹：6 张长图 + 1 篇按顺序的笔记', async () => {
+    await mark(tp);
+    const before = await scrollTop(), rib = tp.locator(`${MSG} clipper-ribbon button`).last();
+    await pull(tp, rib, 150, false);
+    assert.equal(await rib.evaluate(b => b.classList.contains('ready')), true, '拉过 100px 该变紫');
+    assert.equal(await rib.locator('.vt').innerText(), '松手收藏整段');
+    await tp.mouse.up();
+    await fresh(tp).filter({ hasText: /正在读第 \d+ 条/ }).waitFor({ timeout: 5_000 });
+    const text = await done(tp);
+    assert.match(text, /^已收藏整段\n/, text);
+    assert.ok(text.includes('第 1 问：请讲讲第 1 个主题的要点（整段）'), `文件夹名该取第一问：${text}`);
+    assert.equal(await scrollTop(), before, '读完该滚回原位');
+    const all = await threads(), names = Object.keys(all).filter(d => d.includes('第 1 问'));
+    assert.equal(names.length, 1, JSON.stringify(Object.keys(all)));
+    assert.match(names[0], /^\d{4}-\d{2}-\d{2} 第 1 问：请讲讲第 1 个主题的要点（整段）$/);
+    const files = all[names[0]], imgs = Object.keys(files).filter(f => f.endsWith('.png')).sort();
+    assert.deepEqual(imgs, [1, 2, 3, 4, 5, 6].map(k => `answer-0${k}.png`));
+    for (const f of imgs) assert.ok(files[f][0] > 600 && files[f][1] > 150, `${f} 尺寸不对：${files[f]}`);
+    const notes = Object.keys(files).filter(f => f.endsWith('.md'));
+    assert.deepEqual(notes, ['第 1 问：请讲讲第 1 个主题的要点（整段）.md']);
+    const note = files[notes[0]];
+    assert.match(note, /^---\nsource: claude\nurl: https:\/\/claude\.ai\/chat\/thread\n[\s\S]*\nthread: true\n---\n/, note);
+    assert.ok(!/incomplete|没读成/.test(note), note);
+    // 每一问每一答按顺序：小标题、折叠的提问、打开原回答（带这条回答的编号）、长图、正文
+    let at = 0;
+    for (let k = 1; k <= 6; k++) {
+      for (const s of [`## ${k}. 第 ${k} 问：请讲讲第 ${k} 个主题的要点`, '> [!question]- 提问', '[↩ 打开原回答](https://claude.ai/chat/thread#clip-',
+        `![[answer-0${k}.png]]`, `第 ${k} 条回答`, `第 ${k} 条回答的第 6 段`]) {
+        const i = note.indexOf(s, at);
+        assert.ok(i >= 0, `第 ${k} 轮缺「${s}」或顺序不对`);
+        at = i + s.length;
+      }
+    }
+  });
+
+  test('同一个对话再整段收藏：覆盖原文件夹，进度卡写「已更新整段」；上次多出来的长图删掉，用户自己放的文件不动', async () => {
+    // 模拟上次收藏时这段对话多一条回答，以及用户自己放进去的文件
+    await sw.evaluate(async () => {
+      for await (const [d, h] of (await navigator.storage.getDirectory()).entries())
+        if (d.includes('第 1 问') && d.endsWith('（整段）'))
+          for (const f of ['answer-09.png', '我的批注.txt']) {
+            const w = await (await h.getFileHandle(f, { create: true })).createWritable();
+            await w.write('x');
+            await w.close();
+          }
+    });
+    await mark(tp);
+    await pull(tp, tp.locator(`${MSG} clipper-ribbon button`).last(), 150);
+    assert.match(await done(tp), /^已更新整段\n/);
+    const all = await threads(), names = Object.keys(all).filter(d => d.includes('第 1 问'));
+    assert.equal(names.length, 1, `不该另建文件夹：${Object.keys(all)}`);
+    const files = Object.keys(all[names[0]]);
+    assert.ok(!files.includes('answer-09.png'), '上次多出来的长图该删掉');
+    assert.ok(files.includes('我的批注.txt'), '用户自己的文件不该动');
+    assert.equal(files.length, 8, files.join(', '));
+  });
+
+  test('往下移动不到 6px 算点击：只收这一条', async () => {
+    await mark(tp);
+    await pull(tp, tp.locator(`${MSG} clipper-ribbon button`).last(), 4);
+    const card = fresh(tp).filter({ has: tp.locator('.loc') });
+    await card.waitFor({ timeout: 30_000 });
+    assert.match(await card.innerText(), /^已收藏\n/);
+  });
+
+  test('ChatGPT：拉丝带松手，存下 2 张长图', async () => {
+    await mark(page);
+    await page.locator(ANSWER).scrollIntoViewIfNeeded();
+    await pull(page, page.locator(`${ANSWER} clipper-ribbon button`), 150);
+    assert.match(await done(page), /^已收藏整段\n/);
+    const all = await threads(), name = Object.keys(all).find(d => !d.includes('第 1 问'));
+    assert.deepEqual(Object.keys(all[name]).filter(f => f.endsWith('.png')).sort(), ['answer-01.png', 'answer-02.png']);
   });
 });
 

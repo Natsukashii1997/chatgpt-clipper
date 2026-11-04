@@ -240,6 +240,25 @@ export function buildNote(n: { url: string; captured: Date; title: string; quest
   return [front, warn, `[↩ 打开原回答](${n.url})`, `> [!question]- 提问\n${quote}`, n.image ? '![[answer.png]]' : '', n.body].filter(Boolean).join('\n\n') + '\n';
 }
 
+/** 整段收藏（FR-13）的一轮：一问，后面跟着的回答（通常一条）。回答：link 打开原回答的链接，image 长图文件名（没截成为空），error 没读成的原因 */
+export interface ThreadRound { question: string; answers: { link: string; image: string; body: string; error?: string }[] }
+
+/** 整段笔记：frontmatter（url 是对话地址，thread: true）+ 每一轮一节：小标题是提问开头，折叠的提问、打开原回答、长图、正文 */
+export function buildThreadNote(n: { url: string; captured: Date; title: string; rounds: ThreadRound[]; warn?: string[] }): string {
+  const { date, time } = beijingTime(n.captured);
+  const front = ['---', `source: ${SITE}`, `url: ${n.url}`, `captured: ${date} ${time}`, `title: ${JSON.stringify(n.title)}`,
+    `tags: [${SITE}收藏]`, 'thread: true', ...(n.warn?.length ? ['incomplete: true'] : []), '---'].join('\n');
+  const warn = n.warn?.length ? `> [!warning] 可能不完整\n> ${n.warn.join('；')}` : '';
+  const rounds = n.rounds.map((r, i) => {
+    const q = r.question.replace(/\s+/g, ' ').trim(), head = q.length > 30 ? `${q.slice(0, 30)}…` : q;
+    const quote = (r.question || '（没找到提问）').split('\n').map(l => (l.trim() ? `> ${l}` : '>')).join('\n');
+    return [`## ${i + 1}. ${head || '（没找到提问）'}`, `> [!question]- 提问\n${quote}`,
+      ...r.answers.flatMap(a => [`[↩ 打开原回答](${a.link})`, a.error ? `> [!warning] 这条回答没读成\n> ${a.error}` : '', a.image ? `![[${a.image}]]` : '', a.body])]
+      .filter(Boolean).join('\n\n');
+  });
+  return [front, warn, ...rounds].filter(Boolean).join('\n\n') + '\n';
+}
+
 /** 看不见的不转：display:none、visibility:hidden，以及 1×1 绝对定位的读屏文字。display:contents 的容器内容照常可见 */
 function hidden(el: Element): boolean {
   const cs = getComputedStyle(el);

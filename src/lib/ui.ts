@@ -10,18 +10,28 @@ export type RibbonState = 'idle' | 'busy' | 'done' | 'err';
 const STICKY_TOP = 64;
 // 丝带画在回答左侧空白里，再往左会被 ChatGPT 外层容器裁掉
 const RIBBON_W = 16, RIBBON_LEFT = -(ANSWER_GUTTER - 1);
+// 往下拉丝带收藏整段对话（2026-11-04 用户选定「拉长书签」A 版）：往下移动超过 PULL_START 才算拉，不然算点击；
+// 拉过 PULL_READY 松手就收整段；丝带最长拉到 60 + PULL_MAX
+export const PULL_START = 6, PULL_READY = 100;
+const PULL_MAX = 220;
 
 const RIBBON_CSS = `
 :host{all:initial;display:block;position:absolute;top:0;bottom:0;left:${RIBBON_LEFT}px;width:${RIBBON_W}px;pointer-events:none}
 .st{position:sticky;top:${STICKY_TOP}px}
-.rib{pointer-events:auto;display:block;width:${RIBBON_W}px;height:44px;border:0;padding:0;margin:0;cursor:pointer;
-  background:#ffb020;clip-path:polygon(0 0,100% 0,100% 100%,50% 82%,0 100%);opacity:.35;transition:height .18s,opacity .18s}
+.rib{pointer-events:auto;display:block;position:relative;width:${RIBBON_W}px;height:44px;border:0;padding:0;margin:0;cursor:pointer;touch-action:none;
+  background:#ffb020;clip-path:polygon(0 0,100% 0,100% 100%,50% calc(100% - 8px),0 100%);opacity:.35;transition:height .18s,opacity .18s}
 .rib:hover,.rib:focus-visible{height:60px;opacity:1;outline:none}
 .rib.on{opacity:1}
 .rib.busy{background:#2f6bff;cursor:progress}
 .rib.done{background:#10a37f;opacity:.75}
 .rib.err{background:#d93025}
 .rib.pick{height:60px;opacity:1;background:repeating-linear-gradient(135deg,#2f6bff 0 5px,#7ea2ff 5px 10px)}
+.rib.pull{opacity:1;transition:none;cursor:grabbing}
+.rib.ready{background:#5b3df5}
+.vt{display:none;position:absolute;left:0;right:0;top:6px;writing-mode:vertical-rl;text-orientation:upright;color:#7a4b00;letter-spacing:1px;white-space:nowrap;
+  font:600 10.5px/16px -apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",sans-serif}
+.rib.long .vt{display:block}
+.rib.ready .vt{color:#fff}
 .pill{display:none;position:absolute;left:0;top:-24px;white-space:nowrap;padding:2px 9px;border-radius:999px;background:#fff;color:#2f6bff;border:1px solid #2f6bff;
   box-shadow:0 3px 10px rgba(0,0,0,.12);font:11px/16px -apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",sans-serif}
 .rib.pick+.pill{display:block}`;
@@ -85,24 +95,58 @@ function shadowHost(tag: string, css: string): { host: HTMLElement; root: Shadow
 }
 
 /** 在回答里挂一条丝带（绝对定位在左侧空白处，不影响回答布局）。
- *  pick(n)：回答里选中了 n 块时丝带变成蓝色斜纹「荧光笔」，上方标签写块数，点它只收这几块（FR-12，用户 2026-11-04 选定 C 版样式）；n 为 0 恢复 */
-export function mountRibbon(answer: HTMLElement, onClick: () => void) {
+ *  pick(n)：回答里选中了 n 块时丝带变成蓝色斜纹「荧光笔」，上方标签写块数，点它只收这几块（FR-12，用户 2026-11-04 选定 C 版样式）；n 为 0 恢复。
+ *  按住往下拉：丝带跟着变长，拉过 PULL_READY 变紫、写「松手收藏整段」，松手调 onPull；不到位松手就弹回 */
+export function mountRibbon(answer: HTMLElement, onClick: () => void, onPull: () => void) {
   if (getComputedStyle(answer).position === 'static') answer.style.position = 'relative';
   const { host, root } = shadowHost('clipper-ribbon', RIBBON_CSS);
-  root.innerHTML += '<div class="st"><button class="rib" title="收藏这条回答" aria-label="收藏这条回答"></button><div class="pill"></div></div>';
-  const btn = root.querySelector('button')!, pill = root.querySelector<HTMLElement>('.pill')!;
-  let state: RibbonState = 'idle', picked = 0;
+  root.innerHTML += '<div class="st"><button class="rib" title="收藏这条回答" aria-label="收藏这条回答"><span class="vt"></span></button><div class="pill"></div></div>';
+  const btn = root.querySelector('button')!, pill = root.querySelector<HTMLElement>('.pill')!, vt = root.querySelector<HTMLElement>('.vt')!;
+  let state: RibbonState = 'idle', picked = 0, pull = -1;   // pull：往下拉了多少 px，没在拉是 -1
   const draw = () => {
     const on = btn.classList.contains('on');
-    btn.className = `rib ${state !== 'idle' ? state : ''} ${picked && state !== 'busy' ? 'pick' : ''}`;
+    btn.className = pull >= 0 ? `rib pull ${pull >= PULL_READY ? 'ready' : ''} ${pull > 50 ? 'long' : ''}`
+      : `rib ${state !== 'idle' ? state : ''} ${picked && state !== 'busy' ? 'pick' : ''}`;
     btn.classList.toggle('on', on);
+    btn.style.height = pull >= 0 ? `${60 + pull}px` : '';
+    vt.textContent = pull >= PULL_READY ? '松手收藏整段' : '继续下拉';
     pill.textContent = `收藏选中 · ${picked} 块`;
     btn.title = picked ? `只收藏选中的 ${picked} 块` : '收藏这条回答';
     btn.setAttribute('aria-label', btn.title);
   };
-  // 点丝带不清掉选区
-  btn.addEventListener('pointerdown', e => e.preventDefault());
-  btn.addEventListener('click', e => { e.stopPropagation(); onClick(); });
+  // 拉过的那次松手后浏览器可能还补一个 click，不算点击
+  let dragged = false;
+  btn.addEventListener('pointerdown', e => {
+    e.preventDefault();   // 点丝带不清掉选区
+    if (e.button !== 0) return;
+    const y0 = e.clientY;
+    dragged = false;
+    const move = (ev: PointerEvent) => {
+      const dy = ev.clientY - y0;
+      if (pull < 0 && dy <= PULL_START) return;
+      dragged = true;
+      pull = Math.max(0, Math.min(PULL_MAX, dy));
+      draw();
+    };
+    const up = () => {
+      removeEventListener('pointermove', move);
+      removeEventListener('pointerup', up);
+      removeEventListener('pointercancel', up);
+      const ready = pull >= PULL_READY;
+      pull = -1;
+      draw();   // 去掉内联高度，丝带按 transition 弹回原长
+      if (ready) onPull();
+    };
+    // 拉的时候指针会离开丝带，事件挂在窗口上
+    addEventListener('pointermove', move);
+    addEventListener('pointerup', up);
+    addEventListener('pointercancel', up);
+  });
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (dragged) { dragged = false; return; }
+    onClick();
+  });
   // 鼠标在回答上时丝带变实
   answer.addEventListener('mouseenter', () => btn.classList.add('on'));
   answer.addEventListener('mouseleave', () => btn.classList.remove('on'));
@@ -145,6 +189,8 @@ export function progressCard() {
   let timer = 0;
   return {
     step(i: number, state: StepState, note = '') { states[i] = state; notes[i] = note; draw(); },
+    /** 收藏过程中改顶部的状态（整段收藏：「正在读第 k 条」） */
+    title(s: string) { headline = s; draw(); },
     finish(ok: boolean, status: string, place: Place, action?: { label: string; run: () => void }, autoCloseMs = 0, why?: Why) {
       headline = status;
       if (!ok) states.forEach((st, i) => { if (st === 'on') states[i] = 'bad'; });   // 没做完的那步算失败，不再转圈

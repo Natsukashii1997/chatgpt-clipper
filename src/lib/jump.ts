@@ -34,7 +34,7 @@ export async function jumpToClip() {
   notice('没找到收藏的那条回答', '可能被删了或重新生成过，已打开对话。');
 }
 
-function scrollParent(el: HTMLElement): HTMLElement {
+export function scrollParent(el: HTMLElement): HTMLElement {
   for (let a = el.parentElement; a; a = a.parentElement)
     if (/auto|scroll/.test(getComputedStyle(a).overflowY) && a.scrollHeight > a.clientHeight) return a;
   return document.scrollingElement as HTMLElement;

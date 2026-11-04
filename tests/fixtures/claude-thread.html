@@ -1,0 +1,49 @@
+<!doctype html>
+<!-- 仿 Claude 网页版的多轮对话（整段收藏 FR-13 用，内容是编的）。结构照 docs/recon/2026-11-04-整段收藏侦察记录.md：
+     虚拟列表，问和答各占一行（transcript-row + data-index），总高度一开始就定了；只渲染屏幕附近的行，滚动后 100ms 才渲染，远处的行卸掉。
+     打开时停在底部 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>多轮测试对话 - Claude</title>
+<style>
+body{margin:0;background:#fff;color:#141413;font:16px/24px Georgia,serif}
+.scroller{height:100vh;overflow-y:auto;overflow-x:hidden}
+[data-testid="transcript-sizer"]{position:relative;max-width:740px;margin:0 auto}
+[data-testid="transcript-row"]{position:absolute;left:0;right:0}
+[data-testid="user-message"]{background:#f0eee6;border-radius:12px;padding:10px 16px;margin:12px 0 12px auto;width:fit-content;max-width:80%}
+[data-testid="assistant-message"]{position:relative}
+h2{font-size:18px;margin:8px 0}
+p{margin:0 0 12px}
+</style>
+</head>
+<body>
+<div class="scroller"><div data-testid="transcript-sizer"></div></div>
+<script>
+const TURNS = 6, sc = document.querySelector('.scroller'), sizer = document.querySelector('[data-testid="transcript-sizer"]');
+const rows = [];
+let y = 0;  // 不能叫 top：和 window.top 冲突
+for (let k = 1; k <= TURNS; k++) {
+  rows.push({ h: 72, html: `<div data-testid="user-message"><p style="margin:0">第 ${k} 问：请讲讲第 ${k} 个主题的要点</p></div>` });
+  const paras = 6 + (k % 3) * 4;
+  rows.push({ h: 80 + paras * 60, html: `<div data-testid="assistant-message" data-turn-key="thread-turn-${k}"><h2>第 ${k} 条回答</h2>`
+    + Array.from({ length: paras }, (_, i) => `<p>第 ${k} 条回答的第 ${i + 1} 段：这是一段编出来的文字，用来撑出回答的高度，看整段收藏能不能逐条读到。</p>`).join('') + '</div>' });
+}
+rows.forEach(r => { r.top = y; y += r.h; });
+sizer.style.height = `${y + 40}px`;
+// 只留屏幕上下 150px 内的行
+function render() {
+  const lo = sc.scrollTop - 150, hi = sc.scrollTop + sc.clientHeight + 150;
+  rows.forEach((r, i) => {
+    const el = sizer.querySelector(`[data-index="${i}"]`), show = r.top < hi && r.top + r.h > lo;
+    if (show && !el) sizer.insertAdjacentHTML('beforeend', `<div data-testid="transcript-row" data-index="${i}" style="top:${r.top}px;height:${r.h}px">${r.html}</div>`);
+    if (!show && el) el.remove();
+  });
+}
+let t = 0;
+sc.addEventListener('scroll', () => { clearTimeout(t); t = setTimeout(render, 100); });
+sc.scrollTop = sc.scrollHeight;
+render();
+</script>
+</body>
+</html>

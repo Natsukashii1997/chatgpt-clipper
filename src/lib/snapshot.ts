@@ -217,7 +217,7 @@ export async function toPng(snap: Snapshot, dpr = devicePixelRatio): Promise<Blo
   canvas.width = Math.round(w * scale);
   canvas.height = Math.round(h * scale);
   canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
-  return new Promise((resolve, reject) => canvas.toBlob(b => (b ? resolve(b) : reject(new Error('画布导出 PNG 失败'))), 'image/png'));
+  return new Promise((resolve, reject) => canvas.toBlob(b => (b ? resolve(b) : reject(new Error(`画布导出 PNG 失败（${canvas.width}×${canvas.height}）`))), 'image/png'));
 }
 
 // 浏览器默认样式：在空白 iframe 里各建一个同名元素读计算样式，按标签缓存

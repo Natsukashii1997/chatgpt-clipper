@@ -1,5 +1,5 @@
 import { DOWNLOAD_ROOT, type Request, type Response } from '@/lib/messages';
-import { dirState, getSaved, loadDir, loadWhere, obsidianUrl, saveCollection, saveWhy } from '@/lib/vault';
+import { dirState, finishThread, getSaved, loadDir, loadWhere, obsidianUrl, saveCollection, saveWhy, threadFolder, writeFiles } from '@/lib/vault';
 
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener((msg: Request, _sender, reply: (r: Response) => void) => {
@@ -9,7 +9,7 @@ export default defineBackground(() => {
 });
 
 async function handle(msg: Request): Promise<Response> {
-  if (msg.type === 'save' || msg.type === 'why') {
+  if (msg.type === 'save' || msg.type === 'why' || msg.type.startsWith('thread-')) {
     const dir = await loadDir(), state = await dirState(dir);
     if (!dir) return { ok: false, code: 'no-folder', error: '还没选 Vault 文件夹' };
     if (state !== 'granted') return { ok: false, code: 'no-permission', error: `文件夹「${dir.name}」的授权已失效` };
@@ -17,6 +17,20 @@ async function handle(msg: Request): Promise<Response> {
       await saveWhy(dir, msg.id, msg.why);
       return { ok: true };
     }
+    if (msg.type === 'thread-begin') {
+      const r = await threadFolder(dir, msg.id, msg.folder);
+      return { ok: true, folder: r.name, path: `${dir.name}/${r.name}`, updated: r.updated, moved: r.moved };
+    }
+    if (msg.type === 'thread-file') {
+      await writeFiles(dir, msg.folder, [{ name: msg.file.name, data: await (await fetch(msg.file.url)).blob() }]);
+      return { ok: true };
+    }
+    if (msg.type === 'thread-end') {
+      const r = await finishThread(dir, msg.id, msg.folder, { name: msg.note.name, data: await (await fetch(msg.note.url)).blob() }, msg.images);
+      const where = await loadWhere();
+      return { ok: true, path: `${dir.name}/${msg.folder}`, why: r.why, open: where ? obsidianUrl(where, msg.folder, msg.note.name) : '' };
+    }
+    if (msg.type !== 'save') return { ok: false, error: '未知消息' };
     const files = await Promise.all(msg.files.map(async f => ({ name: f.name, data: await (await fetch(f.url)).blob() })));
     const r = await saveCollection(dir, msg.id, msg.folder, files);
     const where = await loadWhere(), note = files.find(f => f.name.endsWith('.md'))?.name;

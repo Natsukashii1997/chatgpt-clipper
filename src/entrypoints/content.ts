@@ -1,9 +1,10 @@
-import { answerBlocks, answerChars, answerFingerprint, answerKey, answerQuestion, answerTitle, findAnswers, inChat, NOISE, selectedBlocks, SITE_NAME } from '@/lib/adapter';
-import { answerToMarkdown, buildNote, readCodeEditors, type CodeRead } from '@/lib/markdown';
+import { answerBlocks, answerChars, answerFingerprint, answerKey, answerQuestion, answerTitle, findAnswers, inChat, NOISE, selectedBlocks, SITE_NAME, userText } from '@/lib/adapter';
+import { answerToMarkdown, buildNote, buildThreadNote, readCodeEditors, type CodeRead, type ThreadRound } from '@/lib/markdown';
 import type { DownloadFile, FailCode, Request, Response } from '@/lib/messages';
 import { clipHash, jumpToClip } from '@/lib/jump';
 import { folderName, noteName } from '@/lib/naming';
 import { embedResources, styler, takeSnapshot, toPng } from '@/lib/snapshot';
+import { readThread } from '@/lib/thread';
 import { mountRibbon, notice, progressCard, STEPS, UI_ATTR, type Place, type RibbonState, type Why } from '@/lib/ui';
 
 export default defineContentScript({
@@ -20,7 +21,7 @@ export default defineContentScript({
             // 节选不改丝带的收藏状态：收的时候转蓝，收完恢复
             if (blocks.length) void capture(el, s => ribbon.set(s === 'busy' ? 'busy' : r!.state), blocks);
             else void capture(el, r!.set);
-          });
+          }, () => void captureThread());
           const fresh: Ribbon = { el, state: 'idle', text: -1, set: s => { fresh.state = s; ribbon.set(s); }, pick: ribbon.pick };
           ribbons.set(el, (r = fresh));
         }
@@ -215,6 +216,120 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blo
     busy.delete(el);
     el.querySelectorAll(`[${CUT}]`).forEach(n => n.removeAttribute(CUT));
   }
+}
+
+interface ThreadAnswer { id: string; png: string; height: number; body: string }
+type ThreadPart = { role: 'user'; text: string } | ({ role: 'assistant' } & (ThreadAnswer | { error: string }));
+let threading = false;
+
+/** 整段收藏（FR-13）：往下拉丝带松手后，从头到尾逐条读每一问每一答，读完滚回原位；再存成一个「日期 标题（整段）」文件夹：
+ *  每条回答一张长图（answer-01.png……），一篇笔记按顺序放每一问每一答。收藏记录的键是对话地址，同一个对话再收就覆盖 */
+async function captureThread() {
+  if (threading) return;
+  threading = true;
+  const card = progressCard(), parts: ThreadPart[] = [], warns: string[] = [], started = new Date();
+  let title = '';
+  try {
+    card.title('正在读对话…');
+    card.step(0, 'on');
+    const { count, missed } = await readThread(async (it, k) => {
+      card.title(`正在读第 ${k} 条`);
+      card.step(0, 'on', `${k} 条`);
+      await nextFrame();
+      if (it.role === 'user') {
+        const text = userText(it.el);
+        // 文件夹名用第一问的前 30 字
+        title ||= text.replace(/\s+/g, ' ').trim().slice(0, 30);
+        parts.push({ role: 'user', text });
+        return;
+      }
+      try {
+        parts.push({ role: 'assistant', ...(await readAnswer(it.el)) });
+      } catch (e) {
+        const reason = e instanceof Error ? e.message : String(e);
+        warns.push(`第 ${k} 条：${reason}`);
+        parts.push({ role: 'assistant', error: reason });
+        console.error(`[chatgpt-clipper] 整段收藏第 ${k} 条失败`, e);
+      }
+    });
+    if (missed) warns.push(`漏了 ${missed} 条（滚动时没渲染出来）`);
+    title ||= document.title.slice(0, 30);
+    card.title('收藏中…');
+    card.step(0, missed ? 'warn' : 'ok', `${count} 条`);
+    // 按顺序拼成一轮一轮；长图按回答的序号起名
+    const base = `${location.origin}${location.pathname}`, images: DownloadFile[] = [], rounds: ThreadRound[] = [];
+    let n = 0;
+    for (const p of parts) {
+      if (p.role === 'user') { rounds.push({ question: p.text, answers: [] }); continue; }
+      if (!rounds.length) rounds.push({ question: '', answers: [] });
+      const name = `answer-${String(++n).padStart(2, '0')}.png`;
+      if ('error' in p) { rounds.at(-1)!.answers.push({ link: base, image: '', body: '', error: p.error }); continue; }
+      images.push({ name, url: p.png });
+      rounds.at(-1)!.answers.push({ link: `${base}${clipHash(p.id)}`, image: name, body: p.body });
+    }
+    card.step(1, images.length < n ? 'warn' : 'ok', `${images.length} 张`);
+    const note: DownloadFile = { name: noteName(`${title}（整段）`),
+      url: `data:text/markdown;charset=utf-8,${encodeURIComponent(buildThreadNote({ url: base, captured: started, title, rounds, warn: warns }))}` };
+    card.step(2, 'ok', `${rounds.length} 问 ${n} 答`);
+    card.step(3, 'on');
+    const id = `thread:${base}`, folder = `${folderName(title, started)}（整段）`;
+    const begin = (await browser.runtime.sendMessage({ type: 'thread-begin', id, folder } satisfies Request)
+      .catch((e: Error) => ({ ok: false, error: e.message }))) as Response | undefined;
+    if (begin?.ok) {
+      const [dir = '', ...rest] = (begin.path ?? '').split('/'), sub = rest.join('/'), date = sub.match(/^\d{4}-\d{2}-\d{2}/)?.[0] ?? '';
+      const head = sub.slice(date.length).trim() || title;
+      if (begin.moved) {
+        card.step(3, 'ok', '已收藏过');
+        card.finish(true, '已收藏过', { icon: '📁', head, sub: `原文件夹已不在「${dir}」里（可能整理走了），这次没有重写` }, undefined, 8000);
+        return;
+      }
+      for (const [i, file] of images.entries()) {
+        card.step(3, 'on', `${i + 1}/${images.length}`);
+        await send({ type: 'thread-file', folder: begin.folder!, file });
+      }
+      const end = await send({ type: 'thread-end', id, folder: begin.folder!, note, images: images.map(f => f.name) });
+      const status = begin.updated ? '已更新' : '已存入', warn = warns.length > 0;
+      card.step(3, 'ok', status);
+      const open: Place['open'] = end.open ? { label: '在 Obsidian 里打开 ↗', href: end.open, run: () => openLink(end.open!) }
+        : { label: '设置 Obsidian 位置后可直接打开 ↗', run: () => void send({ type: 'options' }) };
+      const why: Why = { value: end.why ?? '', save: w => send({ type: 'why', id, why: w }).then(() => undefined) };
+      card.finish(true, warn ? '已收藏，但可能不完整' : begin.updated ? '已更新整段' : '已收藏整段',
+        warn ? { icon: '⚠️', head: warns.join('；'), sub: '能存的部分已存好', warn, open } : { icon: '📁', head, sub: [date, dir].filter(Boolean).join(' · '), open },
+        undefined, warn ? 0 : 8000, why);
+      return;
+    }
+    // 写不进 Vault：退回浏览器下载，一个文件一条消息；没选 Vault 文件夹只下载长图（同单条收藏）
+    const noVault = begin?.code === 'no-folder', dl = noVault ? images : [note, ...images];
+    card.step(3, 'bad', noVault ? '无 Obsidian' : begin?.code === 'no-permission' ? '授权失效' : '失败');
+    let got = 0;
+    for (const f of dl) got += (await send({ type: 'download', folder, files: [f] }).catch(() => ({ ids: [] }))).ids?.length ?? 0;
+    const reason = noVault ? '无 Obsidian' : begin?.error ?? '后台无响应';
+    card.finish(false, got ? `无法保存，${noVault ? '长图' : '文件'}已下载` : '收藏失败', { icon: got ? '⬇️' : '⚠️', head: title,
+      sub: [got ? `${reason}，已下载 ${got} 个文件到 Chrome` : reason, ...warns].join('；') },
+      begin?.code ? { label: noVault ? '去设置' : '去授权', run: () => void send({ type: 'options' }) } : undefined);
+  } catch (e) {
+    console.error('[chatgpt-clipper] 整段收藏中断', e);
+    card.finish(false, '整段收藏失败', { icon: '⚠️', head: title || document.title,
+      sub: browser.runtime?.id ? (e instanceof Error ? e.message : String(e)) : '插件刚更新过，刷新这个页面后再收藏' });
+  } finally {
+    threading = false;
+  }
+}
+
+/** 整段收藏里的一条回答：长图和正文，做法同单条收藏 */
+async function readAnswer(el: HTMLElement): Promise<ThreadAnswer> {
+  const id = await answerFingerprint(el), st = styler();
+  let code: Map<Element, CodeRead>;
+  try {
+    code = await readCodeEditors(el, l => st.copy(l));
+  } finally {
+    st.dispose();
+  }
+  // 快照和正文紧接着做（中间不等待），后面导出图片时回答的节点可能已被页面换掉
+  const snap = takeSnapshot(el, { exclude: `[${UI_ATTR}]`, drop: NOISE, codeLines: new Map([...code].map(([e, c]) => [e, c.lines])) });
+  const body = answerToMarkdown(el, { exclude: `[${UI_ATTR}]`, code });
+  await embedResources(snap, fetchImage);
+  return { id, png: await blobToDataUrl(await toPng(snap)), height: snap.height, body };
 }
 
 /** 给回答里不含要收的块的部分打 CUT：从回答往下，含要收的块就往里走，不含就整棵打上 */

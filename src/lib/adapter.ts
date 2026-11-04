@@ -94,10 +94,25 @@ export function answerQuestion(el: HTMLElement): string {
   const users = [...document.querySelectorAll<HTMLElement>(USER_SELECTOR)]
     .filter(u => u.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
   const u = users.at(-1);
-  if (!u) return '';
+  return u ? userText(u) : '';
+}
+
+/** 一条提问的原文（去掉读屏标题、按钮） */
+export function userText(u: HTMLElement): string {
   const copy = u.cloneNode(true) as HTMLElement;
   copy.querySelectorAll(MD.skip).forEach(n => n.remove());
   return (copy.textContent ?? '').trim();
+}
+
+/** 整段收藏（FR-13）：页面上现有的每一问每一答。order 是在整段对话里的顺序号：Claude 是对话行的 data-index
+ *  （虚拟列表，只渲染屏幕附近的行，远处的会卸掉，见 docs/recon/2026-11-04-整段收藏侦察记录.md）；ChatGPT 全部轮次都在页面里，用页面顺序 */
+export interface ThreadItem { role: 'user' | 'assistant'; el: HTMLElement; order: number }
+const ROW = '[data-testid="transcript-row"][data-index]';
+export function threadItems(): ThreadItem[] {
+  return [...document.querySelectorAll<HTMLElement>(`${USER_SELECTOR}, ${ANSWER_SELECTOR}`)].map((el, i) => ({
+    role: el.matches(ANSWER_SELECTOR) ? 'assistant' : 'user', el,
+    order: CLAUDE ? Number(el.closest<HTMLElement>(ROW)?.dataset.index ?? i) : i,
+  }));
 }
 
 /** 转 Markdown 用到的页面标记（ChatGPT 的 DIL 组件看 data-d-component，见 docs/recon/2026-11-02-回答结构-转MD.md） */

@@ -82,6 +82,34 @@ export async function saveCollection(dir: FileSystemDirectoryHandle, id: string,
   return { name, updated: !!prev, why };
 }
 
+/** 整段收藏（FR-13）开头：定下写到哪个文件夹并建好。id 是对话地址：收藏过且原文件夹还在就沿用（覆盖）；
+ *  原文件夹被整理走了返回 moved、不写；没收藏过就新建，重名加序号 */
+export async function threadFolder(dir: FileSystemDirectoryHandle, id: string, folder: string):
+  Promise<{ name: string; updated?: boolean; moved?: boolean }> {
+  const prev = await getSaved(id);
+  if (prev) return (await hasFolder(dir, prev.folder)) ? { name: prev.folder, updated: true } : { name: prev.folder, moved: true };
+  const name = await newFolder(dir, folder);
+  await dir.getDirectoryHandle(name, { create: true });
+  return { name };
+}
+
+/** 整段收藏结尾（长图已逐张写好）：写笔记，沿用旧笔记里的「为什么存」；删掉上次留下、这次没有的长图（answer-NN.png）和改了名的旧笔记；记下收藏 */
+export async function finishThread(dir: FileSystemDirectoryHandle, id: string, name: string, note: VaultFile, images: string[]): Promise<{ why: string }> {
+  const prev = await getSaved(id);
+  const why = prev?.note ? readWhy(await readNote(dir, name, prev.note).catch(() => '')) : '';
+  if (why) note.data = withWhy(await text(note.data), why);
+  await writeFiles(dir, name, [note]);
+  const sub = await dir.getDirectoryHandle(name), stale: string[] = [];
+  for await (const [f, h] of sub.entries())
+    if (h.kind === 'file' && ((THREAD_IMAGE.test(f) && !images.includes(f)) || (f === prev?.note && f !== note.name))) stale.push(f);
+  for (const f of stale) await sub.removeEntry(f);
+  await setSaved(id, { folder: name, note: note.name });
+  return { why };
+}
+
+/** 整段收藏的长图：answer-01.png、answer-02.png…… */
+export const THREAD_IMAGE = /^answer-\d+\.png$/;
+
 /** 收藏后补写「为什么存」：只改这条收藏的笔记，长图不动 */
 export async function saveWhy(dir: FileSystemDirectoryHandle, id: string, why: string) {
   const prev = await getSaved(id);
