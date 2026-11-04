@@ -13,6 +13,11 @@ const USER_SELECTOR = CLAUDE ? '[data-testid="user-message"]' : '[data-chatgpt-s
  *  长图、笔记、指纹都不要；长图去掉后按剩下的内容重新量高 */
 export const NOISE = CLAUDE ? '[data-cds="TurnStatus"], :has(> [data-testid="message-actions"]), h3[data-find-omitted]' : '';
 
+/** 对话页：ChatGPT /c/…（含 /g/…/c/…），Claude /chat/…。改版自检只在这里查丝带挂没挂上 */
+const CHAT_PATH = CLAUDE ? /^\/chat\/[^/]/ : /\/c\/[^/]/;
+export const inChat = () => CHAT_PATH.test(location.pathname);
+export const SITE_NAME = CLAUDE ? 'Claude' : 'ChatGPT';
+
 /** 给收藏起名：回答里的标题；没有标题时由调用方改用提问（用户 2026-11-02 定，M1 验收 P12） */
 const TITLE_SELECTORS = ['h1, h2, h3, h4, h5, h6'];
 /** 回答左侧到 ChatGPT 外层裁剪容器（overflow-x: clip）的空白宽度，丝带只能画在这里面（2026-11-02 实测） */
@@ -20,6 +25,14 @@ export const ANSWER_GUTTER = 20;
 
 export function findAnswers(root: ParentNode = document): HTMLElement[] {
   return [...root.querySelectorAll<HTMLElement>(ANSWER_SELECTOR)];
+}
+
+/** 页面上这条回答看得见的字数（不算空白、界面行和公式的读屏副本），改版自检拿它和笔记比 */
+export function answerChars(el: HTMLElement): number {
+  const n = (s: string) => s.replace(/\s+/g, '').length;
+  let len = n(el.innerText);
+  for (const x of el.querySelectorAll<HTMLElement>([NOISE, '.katex-mathml'].filter(Boolean).join(', '))) len -= n(x.innerText);
+  return len;
 }
 
 export function answerKey(el: HTMLElement): string {

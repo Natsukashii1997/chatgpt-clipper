@@ -37,16 +37,34 @@ li i{display:block;width:18px;height:18px;margin:0 auto 4px;border-radius:50%;ba
 li.ok{color:#0d0d0d}li.ok i{background:#10a37f;border-color:#10a37f}
 li.on{color:#2f6bff}li.on i{border-color:#2f6bff;border-top-color:#eaf0ff;animation:spin .8s linear infinite}
 li.bad{color:#d93025}li.bad i{background:#d93025;border-color:#d93025}
+li.warn{color:#b26a00}li.warn i{background:#f0a400;border-color:#f0a400}
 li small{display:block;color:#6b6b6b;font-size:10px}
 @keyframes spin{to{transform:rotate(360deg)}}
 .loc{margin-top:12px;padding:8px 10px;border-radius:8px;display:flex;gap:8px;align-items:center}
-.loc.ok{background:#e7f6f1}.loc.bad{background:#fdecea}
+.loc.ok{background:#e7f6f1}.loc.bad{background:#fdecea}.loc.warn{background:#fff4dc}
 .loc .k{font-size:15px;flex:none}
 .loc .v{flex:1;min-width:0}
 .loc .v div:first-child{font-weight:600}
 .loc .v div:last-child{color:#6b6b6b;overflow-wrap:anywhere}
 button.a{font:inherit;border:1px solid #0d0d0d;background:#0d0d0d;color:#fff;border-radius:7px;padding:3px 10px;cursor:pointer;flex:none}
-button.a:hover{background:#333}`;
+button.a:hover{background:#333}
+.why{margin-top:10px}
+.why input{box-sizing:border-box;width:100%;font:inherit;color:inherit;border:1px solid #d6d6d2;border-radius:7px;padding:5px 8px;outline:none;background:#fff}
+.why input:focus{border-color:#2f6bff;box-shadow:0 0 0 3px #eaf0ff}
+.why input::placeholder{color:#a3a3a3}
+.why .hint{display:none;color:#9a9a9a;font-size:10.5px;margin-top:4px}
+.why:focus-within .hint,.why .hint.err{display:block}
+.why .hint.err{color:#d93025}
+.said{margin-top:10px;padding:6px 9px;border-left:3px solid #10a37f;background:#f6fbf9;border-radius:0 6px 6px 0;display:flex;gap:6px;align-items:baseline}
+.said span{flex:1;min-width:0;overflow-wrap:anywhere}
+.said button{font:inherit;font-size:11px;color:#6b6b6b;background:none;border:0;padding:0;cursor:pointer;flex:none}
+.said button:hover{color:#0d0d0d}
+.toast{background:#fff;border:1px solid #f1d8a8;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.12);padding:10px 12px;display:flex;gap:9px;align-items:flex-start}
+.toast .ic{width:20px;height:20px;border-radius:50%;background:#f0a400;color:#fff;font-weight:700;display:grid;place-items:center;flex:none}
+.toast b{display:block;font-size:12.5px}
+.toast .s{color:#6b6b6b}
+.toast button{font:inherit;color:#a3a3a3;background:none;border:0;padding:0;margin-left:auto;cursor:pointer;flex:none}
+.toast button:hover{color:#0d0d0d}`;
 
 function shadowHost(tag: string, css: string): { host: HTMLElement; root: ShadowRoot } {
   const host = document.createElement(tag);
@@ -81,11 +99,11 @@ function dock(): HTMLElement {
   return (dockRoot = root.querySelector('.dock')!);
 }
 
-export type StepState = '' | 'on' | 'ok' | 'bad';
-const ICON: Record<StepState, string> = { '': '', on: '', ok: '✓', bad: '!' };
+export type StepState = '' | 'on' | 'ok' | 'warn' | 'bad';
+const ICON: Record<StepState, string> = { '': '', on: '', ok: '✓', warn: '!', bad: '!' };
 
-/** 结束时底部的「存到哪里」：图标、第一行（收藏文件夹或结果）、第二行（子文件夹或原因） */
-export interface Place { icon: string; head: string; sub: string }
+/** 结束时底部的「存到哪里」：图标、第一行（收藏文件夹或结果）、第二行（子文件夹或原因）；warn 存下了但改版自检没过，标黄 */
+export interface Place { icon: string; head: string; sub: string; warn?: boolean }
 
 /** 右下角一张进度卡（B 版，用户 2026-11-02 选定）：顶部是收藏状态，四步横排成一条进度线，每步下面一个短结果；结束时给「存到哪里」和操作按钮 */
 export function progressCard() {
@@ -103,11 +121,11 @@ export function progressCard() {
   let timer = 0;
   return {
     step(i: number, state: StepState, note = '') { states[i] = state; notes[i] = note; draw(); },
-    finish(ok: boolean, status: string, place: Place, action?: { label: string; run: () => void }, autoCloseMs = 0) {
+    finish(ok: boolean, status: string, place: Place, action?: { label: string; run: () => void }, autoCloseMs = 0, why?: Why) {
       headline = status;
       draw();
       el.classList.add(ok ? 'ok' : 'bad');
-      el.insertAdjacentHTML('beforeend', `<div class="loc ${ok ? 'ok' : 'bad'}"><span class="k"></span><div class="v"><div></div><div></div></div></div>`);
+      el.insertAdjacentHTML('beforeend', `<div class="loc ${place.warn ? 'warn' : ok ? 'ok' : 'bad'}"><span class="k"></span><div class="v"><div></div><div></div></div></div>`);
       const loc = el.querySelector('.loc')!, [head, sub] = loc.querySelectorAll('.v div');
       loc.querySelector('.k')!.textContent = place.icon;
       head!.textContent = place.head;
@@ -120,16 +138,79 @@ export function progressCard() {
         b.addEventListener('click', action.run);
         loc.appendChild(b);
       }
-      // 鼠标停在卡片上时不自动关
-      if (autoCloseMs) {
-        const arm = () => { timer = window.setTimeout(() => el.remove(), autoCloseMs); };
-        el.addEventListener('mouseenter', () => clearTimeout(timer));
-        el.addEventListener('mouseleave', arm);
-        arm();
-      }
+      // 鼠标停在卡片上、正在写「为什么存」时不自动关
+      let typing = false;
+      const arm = () => {
+        clearTimeout(timer);
+        if (autoCloseMs && !typing && !el.matches(':hover')) timer = window.setTimeout(() => el.remove(), autoCloseMs);
+      };
+      if (why) whyBox(el, why, t => { typing = t; arm(); });
+      el.addEventListener('mouseenter', () => clearTimeout(timer));
+      el.addEventListener('mouseleave', arm);
+      arm();
     },
     close() { clearTimeout(timer); el.remove(); },
   };
+}
+
+/** 收藏后补一句「为什么存」（2026-11-04 用户选定 A 版）：value 是笔记里已有的那句，save 把新写的补进笔记 */
+export interface Why { value: string; save: (why: string) => Promise<void> }
+
+function whyBox(card: HTMLElement, why: Why, typing: (t: boolean) => void) {
+  const box = document.createElement('div');
+  card.appendChild(box);
+  let value = why.value;
+  const said = () => {
+    box.className = 'said';
+    box.innerHTML = '<span></span><button>改</button>';
+    box.querySelector('span')!.textContent = value;
+    box.querySelector('button')!.addEventListener('click', () => edit(true));
+  };
+  const edit = (focus: boolean) => {
+    box.className = 'why';
+    box.innerHTML = '<input maxlength="200" placeholder="为什么存？写一句（可不填）"><div class="hint">回车记下 · Esc 不写了</div>';
+    const input = box.querySelector('input')!, hint = box.querySelector('.hint')!;
+    input.value = value;
+    const done = () => { typing(false); if (value) said(); else if (box.contains(input)) input.blur(); };
+    input.addEventListener('focus', () => typing(true));
+    input.addEventListener('blur', () => typing(false));
+    // 按键不往页面传：ChatGPT、Claude 会把键盘输入抢到自己的输入框
+    for (const t of ['keydown', 'keyup', 'keypress', 'input', 'beforeinput', 'paste'] as const) input.addEventListener(t, e => e.stopPropagation());
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { input.value = value; done(); return; }
+      // 输入法选字时的回车不算
+      if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+      const next = input.value.replace(/\s+/g, ' ').trim();
+      input.disabled = true;
+      hint.className = 'hint';
+      hint.textContent = '记下中…';
+      why.save(next).then(() => {
+        value = next;
+        input.disabled = false;
+        hint.textContent = '回车记下 · Esc 不写了';
+        done();
+      }, (err: Error) => {
+        input.disabled = false;
+        input.focus();
+        hint.className = 'hint err';
+        hint.textContent = `没记下：${err.message}`;
+      });
+    });
+    if (focus) input.focus();
+  };
+  if (value) said();
+  else edit(false);
+}
+
+/** 右下角一条黄色提醒，点 ✕ 关（改版自检：丝带一条都没挂上） */
+export function notice(title: string, text: string) {
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.innerHTML = '<span class="ic">!</span><div><b></b><div class="s"></div></div><button title="关闭" aria-label="关闭">✕</button>';
+  el.querySelector('b')!.textContent = title;
+  el.querySelector('.s')!.textContent = text;
+  el.querySelector('button')!.addEventListener('click', () => el.remove());
+  dock().appendChild(el);
 }
 
 function escape(s: string): string {

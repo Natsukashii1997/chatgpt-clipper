@@ -14,7 +14,7 @@ const EXT = path.join(ROOT, '.output/chrome-mv3');
 const FIXTURE = fs.readFileSync(path.join(ROOT, 'tests/fixtures/card-answer.html'), 'utf8');
 const URL = 'https://chatgpt.com/c/fixture';
 const CLAUDE_FIXTURE = fs.readFileSync(path.join(ROOT, 'tests/fixtures/claude-answer.html'), 'utf8');
-const CLAUDE_URL = 'https://claude.ai/chat/fixture';
+const CLAUDE_URL = 'https://claude.ai/chat/fixture', CLAUDE_BROKEN_URL = 'https://claude.ai/chat/broken';
 // 第十节的外部资源：字体与页面同源；图片跨域且不带 CORS 头，和真实页面的 images.openai.com 一样内容脚本读不到
 const FONT_URL = 'https://chatgpt.com/cdn/assets/TestFont.ttf', FONT = fs.readFileSync('/System/Library/Fonts/Supplemental/Zapfino.ttf');
 const IMAGE_URL = 'https://images.openai.com/fixture/bridge.svg';
@@ -41,6 +41,8 @@ before(async () => {
     const url = route.request().url();
     if (url.startsWith(URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: FIXTURE });
     if (url.startsWith(CLAUDE_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: CLAUDE_FIXTURE });
+    // 模拟 Claude 改版：回答换了标记，插件认不出
+    if (url.startsWith(CLAUDE_BROKEN_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: CLAUDE_FIXTURE.replaceAll('data-testid="assistant-message"', 'data-testid="assistant-turn"') });
     if (url === FONT_URL) return route.fulfill({ contentType: 'font/ttf', body: FONT });
     if (url === IMAGE_URL) return route.fulfill({ contentType: 'image/svg+xml', body: IMAGE });
     return route.abort();
@@ -457,6 +459,121 @@ describe('Claude 网页版', () => {
       setTimeout(() => parent.append(again), 200);
     }, MSG);
     await cp.locator(`${MSG} clipper-ribbon button.rib.done`).waitFor({ timeout: 5_000 });
+  });
+
+  test('收藏后补一句「为什么存」：写进笔记，按键不传给页面；再收藏沿用（Obsidian 里手改过的也认）；改成空就去掉', async () => {
+    const sw = ctx.serviceWorkers()[0];
+    const note = () => sw.evaluate(async () => {
+      for await (const [, h] of (await navigator.storage.getDirectory()).entries())
+        for await (const [f, fh] of h.entries()) if (f.endsWith('.md')) return (await fh.getFile()).text();
+    });
+    const collect = async () => {
+      const done = cp.locator('clipper-dock .card.ok, clipper-dock .card.bad');
+      const before = await done.count();
+      await cp.locator(`${MSG} clipper-ribbon button`).click();
+      await done.nth(before).waitFor({ timeout: 30_000 });
+      return done.nth(before);
+    };
+    const write = async (card, text) => {
+      await card.locator('.why input').fill(text);
+      await card.locator('.why input').press('Enter');
+    };
+    await cp.evaluate(() => { window.__keys = 0; document.addEventListener('keydown', () => window.__keys++); });
+
+    let card = await collect();
+    assert.equal(await card.locator('.why input').getAttribute('placeholder'), '为什么存？写一句（可不填）');
+    await card.locator('.why input').click();
+    await cp.keyboard.type('abc');
+    await card.locator('.why input').press('Escape');
+    assert.equal(await cp.evaluate(() => window.__keys), 0, '输入框里的按键不该传到页面');
+    await write(card, '  下周写方案   用 ');
+    await card.locator('.said').waitFor();
+    assert.match(await card.locator('.said').innerText(), /^下周写方案 用\s*改$/);
+    let n = await note();
+    assert.match(n, /\ntitle: "快速排序示例"\nwhy: "下周写方案 用"\n/);
+    assert.match(n, /\n---\n\n> \[!note\] 为什么存\n> 下周写方案 用\n\n> \[!question\]- 提问\n/);
+    assert.ok(n.includes('![[answer.png]]'), '补写不该动长图的嵌入');
+
+    // 在 Obsidian 里手改成不带引号的，再收藏：沿用手改的那句，卡片直接显示
+    await sw.evaluate(async () => {
+      for await (const [, h] of (await navigator.storage.getDirectory()).entries())
+        for await (const [f, fh] of h.entries()) if (f.endsWith('.md')) {
+          const t = (await (await fh.getFile()).text()).replace(/^why: .*$/m, 'why: 手改过');
+          const w = await fh.createWritable(); await w.write(t); await w.close();
+        }
+    });
+    card = await collect();
+    assert.match(await card.locator('.said').innerText(), /^手改过/);
+    n = await note();
+    assert.match(n, /\nwhy: "手改过"\n/);
+    assert.equal(n.match(/\[!note\] 为什么存/g).length, 1);
+    assert.match(n, /> \[!note\] 为什么存\n> 手改过\n/);
+
+    await card.locator('.said button').click();
+    await write(card, '');
+    for (let i = 0; i < 25 && /why:/.test(n = await note()); i++) await new Promise(r => setTimeout(r, 200));
+    assert.doesNotMatch(n, /why:|为什么存/);
+    assert.match(n, /\n---\n\n> \[!question\]- 提问\n/);
+  });
+
+  test('改版自检：笔记读到的字不到页面一半、长图不到页面一半高，照样存下、标黄，笔记标 incomplete', async () => {
+    const sw = ctx.serviceWorkers()[0];
+    const notes = () => sw.evaluate(async () => {
+      const out = [];
+      for await (const [, h] of (await navigator.storage.getDirectory()).entries())
+        for await (const [f, fh] of h.entries()) if (f.endsWith('.md')) out.push(await (await fh.getFile()).text());
+      return out;
+    });
+    const collect = async () => {
+      const done = cp.locator('clipper-dock .card.ok, clipper-dock .card.bad');
+      const before = await done.count();
+      await cp.locator(`${MSG} clipper-ribbon button`).click();
+      await done.nth(before).waitFor({ timeout: 30_000 });
+      return done.nth(before);
+    };
+    // 原样还原用：去掉丝带（还原后由插件重新挂）
+    const html = await cp.locator(MSG).evaluate(el => { const c = el.cloneNode(true); c.querySelector('clipper-ribbon')?.remove(); return c.innerHTML; });
+
+    // 正文被包进一层笔记会跳过的块（代码块语言名的标记）：页面上看得见，笔记里没有
+    await cp.locator(`${MSG} .standard-markdown`).evaluate(md => {
+      const g = document.createElement('div'), skip = document.createElement('div');
+      g.setAttribute('role', 'group');
+      skip.setAttribute('data-find-omitted', '');
+      md.replaceWith(g);
+      g.append(skip);
+      skip.append(md);
+    });
+    let card = await collect(), text = await card.innerText();
+    assert.match(text, /^已收藏，但可能不完整\n/, text);
+    assert.equal(await card.locator('li.warn').innerText(), '!\nMD 文件\n' + text.match(/(\d+ 字)/)[1]);
+    assert.match(await card.locator('.loc.warn').innerText(), /^⚠️\s+笔记只读到页面文字的 \d+%\n页面可能改版了，能存的部分已存好$/);
+    assert.ok(await card.locator('.why input, .said').count(), '标黄时也能写一句');
+    let n = (await notes()).find(t => t.includes('incomplete'));
+    assert.match(n, /\ntags: \[claude收藏\]\nincomplete: true\n---\n\n> \[!warning\] 可能不完整\n> 笔记只读到页面文字的 \d+%，页面可能改版了。\n\n> \[!question\]- 提问\n/);
+
+    // 正文被认成要去掉的界面行（按钮行）：长图只剩 Artifact 卡片那一条
+    await cp.locator(MSG).evaluate((el, html) => { el.innerHTML = html; }, html);
+    await cp.locator(`${MSG} [data-transcript-engine-root]`).evaluate(r => r.insertAdjacentHTML('beforeend', '<div data-testid="message-actions"></div>'));
+    await cp.locator(`${MSG} clipper-ribbon`).waitFor({ state: 'attached' });
+    card = await collect();
+    text = await card.innerText();
+    assert.match(text, /^已收藏，但可能不完整\n/, text);
+    assert.equal(await card.locator('li.warn', { hasText: 'PNG 文件' }).count(), 1);
+    assert.match(await card.locator('.loc.warn').innerText(), /长图只有页面高度的 \d+%/);
+    await cp.locator(MSG).evaluate((el, html) => { el.innerHTML = html; }, html);
+  });
+
+  test('改版自检：对话页 10 秒后一条回答都没认出来，右下角提醒一次；正常页面不提醒', async () => {
+    const broken = await ctx.newPage();
+    await broken.goto(CLAUDE_BROKEN_URL);
+    await new Promise(r => setTimeout(r, 11_000));
+    const toast = broken.locator('clipper-dock .toast');
+    assert.equal(await toast.count(), 1);
+    assert.match(await toast.innerText(), /^!\n收藏按钮没挂上\n这页有对话，但插件没认出回答，Claude 可能改版了。\n✕$/);
+    await toast.locator('button').click();
+    assert.equal(await toast.count(), 0);
+    assert.equal(await cp.locator('clipper-dock .toast').count(), 0, '正常页面不该提醒');
+    await broken.close();
   });
 });
 

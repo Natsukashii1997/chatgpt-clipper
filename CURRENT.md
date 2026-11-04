@@ -1,6 +1,17 @@
 # 当前状态
 
-更新：2026-11-03。M1 已收尾并提交（`2ee7f58`）。M2 支持 Claude 网页版：做完并在真实页面验收 C1–C6 通过（见 [docs/acceptance/M2-Claude验收.md](docs/acceptance/M2-Claude验收.md)），修了加粗 Q1，已提交。下一步：无待办；未覆盖深色模式、带图片的回答，常浩日常用到再看。
+更新：2026-11-04。M2 增强续：常浩从脑暴里选了 5 个功能（写一句、只收选中段落、整段对话、跳回原回答、改版自检），每个先出三版 UI。写一句（A 版）、改版自检（A 版）已做完并提交，zip 已重打。下一步：画「只收选中段落」「整段对话」「跳回原回答」的三版 UI。
+
+## M2 增强续：收藏时写一句、改版自检（2026-11-04，Claude，用户选“写一句A，自检A”、看过开发计划后“按计划开工”、写一句真实页面“测试完了没啥问题”、看过后“提交”；已提交、无需发布）
+
+- 时间：开工 `2026-11-04 11:20`（约，看完计划后），本节写于 `2026-11-04 11:47`。★ 来由：常浩让脑暴插件创新点，选了 1、2、4、6、8 五个，要求每个先看三版 UI 再开发；本轮做进度卡上的两个（PRD FR-8、FR-9）。
+- 改了哪些文件：`src/lib/why.ts`（新：笔记里「为什么存」的读写，只改文本）；`src/lib/vault.ts`（再收藏沿用旧笔记的 why；`saveWhy` 只改笔记）；`src/entrypoints/background.ts`、`src/lib/messages.ts`（新消息 `why`，save 结果带 `why`）；`src/lib/ui.ts`（进度卡输入框与「改」，打字或悬停不自动关；步骤黄色 `warn`、位置块黄底；`notice()` 黄色提醒）；`src/entrypoints/content.ts`（收藏时量页面字数和高度做两项检查；对话页 10 秒后没认出回答就提醒一次）；`src/lib/adapter.ts`（`inChat`、`SITE_NAME`、`answerChars`：不算界面行和公式读屏副本）；`src/lib/markdown.ts`（`buildNote` 的 `warn`：frontmatter `incomplete: true` + `[!warning]` 框）；`tests/snapshot.test.mjs`（3 个用例 + 模拟改版的 Claude 页）；`docs/PRD.md`（FR-8、FR-9、分期）。
+- 测试：`node --test tests/*.test.mjs` 原样结果 `ℹ pass 30` / `ℹ fail 0`；`npm run compile` 无报错；`node scripts/check-rules.mjs` 通过。反向验证各自报红：输入框按键不拦（传到页面）、再收藏不沿用、长图检查、字数检查、10 秒提醒，各 1 个失败。
+- 验证：测试页（Playwright）；写一句：常浩在真实页面试过（截图里进度卡显示「测试 · 改」，回复「没啥问题」）。改版自检：只在测试页模拟改版验证过，真实页面无法主动触发；正常的 ChatGPT、Claude 测试页没有误报。
+- 截图：三版预览与实装截图在会话笔记目录 `side-session-notes/local_091f3a6b-…/`（`写一句与改版自检-三版预览.html/.png`、`自检A-实装-收藏时.png`、`自检A-实装-丝带没挂上.png`，测试页内容）。
+- 发布与回读：无需发布；提交后已 `npm run zip`（25.30 kB）。
+- 与授权不一致之处、遗留问题、范围外发现：卡片标黄时也给「写一句」输入框（三版图里没画，按顺手处理）；标黄时卡片不自动关。阈值「一半」宁漏报不误报，公式很多或代码编辑器只渲染一部分的回答理论上页面字数偏多或偏少，未在真实页面量过。
+- 本轮新坑：无。
 
 ## M2 支持 Claude 网页版（2026-11-03，Claude，用户“只需要 claude”“抓紧开始做 claude 的收藏”“按计划开工”；加 claude.ai 权限、思考过程不收、Artifact 只收卡片、插件改名「AI 回答收藏器」均为用户选定；已提交、无需发布）
 

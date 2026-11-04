@@ -1,5 +1,5 @@
 import { DOWNLOAD_ROOT, type Request, type Response } from '@/lib/messages';
-import { dirState, getSaved, loadDir, saveCollection } from '@/lib/vault';
+import { dirState, getSaved, loadDir, saveCollection, saveWhy } from '@/lib/vault';
 
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener((msg: Request, _sender, reply: (r: Response) => void) => {
@@ -9,13 +9,17 @@ export default defineBackground(() => {
 });
 
 async function handle(msg: Request): Promise<Response> {
-  if (msg.type === 'save') {
+  if (msg.type === 'save' || msg.type === 'why') {
     const dir = await loadDir(), state = await dirState(dir);
     if (!dir) return { ok: false, code: 'no-folder', error: '还没选 Vault 文件夹' };
     if (state !== 'granted') return { ok: false, code: 'no-permission', error: `文件夹「${dir.name}」的授权已失效` };
+    if (msg.type === 'why') {
+      await saveWhy(dir, msg.id, msg.why);
+      return { ok: true };
+    }
     const files = await Promise.all(msg.files.map(async f => ({ name: f.name, data: await (await fetch(f.url)).blob() })));
     const r = await saveCollection(dir, msg.id, msg.folder, files);
-    return { ok: true, path: `${dir.name}/${r.name}`, updated: r.updated, moved: r.moved };
+    return { ok: true, path: `${dir.name}/${r.name}`, updated: r.updated, moved: r.moved, why: r.why };
   }
   if (msg.type === 'saved') {
     const hit = await Promise.all(msg.ids.map(getSaved));

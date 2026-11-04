@@ -1,9 +1,9 @@
-import { answerFingerprint, answerKey, answerQuestion, answerTitle, findAnswers, NOISE } from '@/lib/adapter';
+import { answerChars, answerFingerprint, answerKey, answerQuestion, answerTitle, findAnswers, inChat, NOISE, SITE_NAME } from '@/lib/adapter';
 import { answerToMarkdown, buildNote, readCodeEditors, type CodeRead } from '@/lib/markdown';
 import type { DownloadFile, FailCode, Request, Response } from '@/lib/messages';
 import { folderName, noteName } from '@/lib/naming';
 import { embedResources, styler, takeSnapshot, toPng } from '@/lib/snapshot';
-import { mountRibbon, progressCard, STEPS, UI_ATTR, type RibbonState } from '@/lib/ui';
+import { mountRibbon, notice, progressCard, STEPS, UI_ATTR, type RibbonState, type Why } from '@/lib/ui';
 
 export default defineContentScript({
   matches: ['https://chatgpt.com/*', 'https://claude.ai/*'],
@@ -23,6 +23,7 @@ export default defineContentScript({
         if (r.state === 'idle' && len !== r.text) { r.text = len; check.push(r); }
       }
       if (check.length) void markSaved(check);
+      watchChat();
     };
     // 新回答、切换对话时补挂丝带；React 重绘掉了也补回来
     let pending = 0;
@@ -32,6 +33,23 @@ export default defineContentScript({
     scan();
   },
 });
+
+// 改版自检（2026-11-04 用户选定 A 版）：打开对话 10 秒后一条回答都没认出来，提醒一次（每个对话一次）
+const CHECK_AFTER = 10_000;
+let watched = '', watchTimer = 0;
+const warned = new Set<string>();
+function watchChat() {
+  if (location.href === watched) return;
+  watched = location.href;
+  clearTimeout(watchTimer);
+  if (!inChat()) return;
+  const url = location.href;
+  watchTimer = window.setTimeout(() => {
+    if (location.href !== url || warned.has(url) || findAnswers().length) return;
+    warned.add(url);
+    notice('收藏按钮没挂上', `这页有对话，但插件没认出回答，${SITE_NAME} 可能改版了。`);
+  }, CHECK_AFTER);
+}
 
 interface Ribbon { el: HTMLElement; state: RibbonState; text: number; set: (s: RibbonState) => void }
 const ribbons = new WeakMap<HTMLElement, Ribbon>();
@@ -52,7 +70,9 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
   // 回答没有标题就用提问，最多 30 字（M1 验收 P12）
   const title = (answerTitle(el) || answerQuestion(el).replace(/\s+/g, ' ').trim().slice(0, 30)).slice(0, 120), started = new Date(), id = await answerFingerprint(el);
   const card = progressCard();
-  const files: DownloadFile[] = [], failed: string[] = [];
+  const files: DownloadFile[] = [], failed: string[] = [], warns: string[] = [];
+  // 改版自检：先量页面上的这条回答，结果明显比它少就照样存、标黄
+  const pageChars = answerChars(el), pageHeight = Math.round(el.getBoundingClientRect().height);
   const fail = (i: number, what: string, e: unknown, short = '失败') => {
     const reason = e instanceof Error ? e.message : String(e);
     card.step(i, 'bad', short);
@@ -82,7 +102,9 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
       try {
         await embedResources(snap, fetchImage);
         files.push({ name: 'answer.png', url: await blobToDataUrl(await toPng(snap)) });
-        card.step(1, 'ok', `${snap.height}px`);
+        const short = snap.height < pageHeight / 2;
+        if (short) warns.push(`长图只有页面高度的 ${Math.round((snap.height / pageHeight) * 100)}%`);
+        card.step(1, short ? 'warn' : 'ok', `${snap.height}px`);
       } catch (e) {
         fail(1, 'PNG 文件', e);
       }
@@ -91,14 +113,17 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
     await nextFrame();
     try {
       const body = answerToMarkdown(el, { exclude: `[${UI_ATTR}]`, code: code ?? (await readCodeEditors(el)) });
-      const md = buildNote({ url: `${location.origin}${location.pathname}`, captured: started, title, question: answerQuestion(el), body, image: files.length > 0 });
+      // 回答本身很短（不到 20 字）不比字数
+      const chars = body.replace(/\s+/g, '').length, few = pageChars >= 20 && chars < pageChars / 2;
+      if (few) warns.push(chars ? `笔记只读到页面文字的 ${Math.round((chars / pageChars) * 100)}%` : '笔记没读到正文');
+      const md = buildNote({ url: `${location.origin}${location.pathname}`, captured: started, title, question: answerQuestion(el), body, image: files.length > 0, warn: warns });
       files.unshift({ name: noteName(title), url: `data:text/markdown;charset=utf-8,${encodeURIComponent(md)}` });
-      card.step(2, 'ok', `${body.length} 字`);
+      card.step(2, few ? 'warn' : 'ok', `${body.length} 字`);
     } catch (e) {
       fail(2, 'MD 文件', e);
     }
     const partial = failed.length > 0;   // 快照、PNG 或 MD 没做成，存下来的不完整
-    let savedTo = '', firstId = 0, fix: FailCode | undefined, note = '', got = '';
+    let savedTo = '', firstId = 0, fix: FailCode | undefined, note = '', got = '', why: Why | undefined;
     if (files.length) {
       card.step(3, 'on');
       const folder = folderName(title, started);
@@ -106,6 +131,7 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
       if (res?.ok) {
         savedTo = res.path ?? '';
         note = res.moved ? '已收藏过' : res.updated ? '已更新' : '已存入';
+        if (!res.moved && files[0]?.name.endsWith('.md')) why = { value: res.why ?? '', save: w => send({ type: 'why', id, why: w }).then(() => undefined) };
         card.step(3, 'ok', note);
       } else {
         // 写不进 Vault：退回浏览器下载，并说明原因（FR-5）。没选 Vault 文件夹（比如没装 Obsidian）只下载长图（2026-11-03 用户决定）
@@ -128,9 +154,11 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void) {
     const name = sub.slice(date.length).trim() || title || '这条回答';
     if (!failed.length) {
       setRibbon('done');
-      card.finish(true, note === '已收藏过' ? '已收藏过' : note === '已更新' ? '已更新' : '已收藏', note === '已收藏过'
+      const warn = warns.length > 0 && note !== '已收藏过';
+      card.finish(true, note === '已收藏过' ? '已收藏过' : warn ? '已收藏，但可能不完整' : note === '已更新' ? '已更新' : '已收藏', note === '已收藏过'
         ? { icon: '📁', head: name, sub: `原文件夹已不在「${dir}」里（可能整理走了），这次没有重写` }
-        : { icon: '📁', head: name, sub: [date, dir].filter(Boolean).join(' · ') }, undefined, 8000);
+        : warn ? { icon: '⚠️', head: warns.join('；'), sub: '页面可能改版了，能存的部分已存好', warn }
+        : { icon: '📁', head: name, sub: [date, dir].filter(Boolean).join(' · ') }, undefined, warn ? 0 : 8000, why);
     } else {
       setRibbon('err');
       const headline = savedTo ? '已收藏（不完整）' : !firstId ? '收藏失败'
