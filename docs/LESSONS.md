@@ -140,3 +140,19 @@
 - 正确做法：按侦察记录的原定做法，读每一条之前先滚到它开头、等一下，再按顺序号重新找节点，确认在页面上且高度不为 0 才读；快照和转 Markdown 紧接着做，导出图片之后不再碰原节点。导出失败的报错带画布尺寸（`画布导出 PNG 失败（宽×高）`），再出现时看是 0×0（节点没了）、超大（画布上限）还是正常尺寸（内存）。
 - 证据：改后常浩在同一段对话复验，6 张都成（截图在会话里，未存证据目录）；`src/lib/thread.ts` 的 `readThread`。没有能报红的测试。
 - 升级：未升级。
+
+## L-15 claude.ai 下不只有聊天：Claude Code 会话页也用 assistant-message（2026-11-05）
+
+- 现象：常浩用网页看 Claude Code 会话（`claude.ai/code/session_…`），每条 Claude 消息左边都挂着收藏丝带，一串叠在一起。
+- 根因：内容脚本匹配 `https://claude.ai/*`，找回答只看 `[data-testid="assistant-message"]`；Claude Code 会话页同域、同一个标记（Claude in Chrome 只读查过：3 条 assistant-message、3 条丝带）。
+- 正确做法：Claude 只在对话页（`/chat/…`）认回答，`findAnswers` 里先查 `inChat()`；ChatGPT 不限路径（临时对话地址里没有 `/c/`）。同域下新出现的产品页面，先查它是否复用了聊天的标记。
+- 证据：`tests/snapshot.test.mjs`「Claude Code 的会话页（claude.ai/code/…）不挂丝带」（去掉 `inChat()` 判断时报红）。
+- 升级：未升级。
+
+## L-16 测试全挂「Executable doesn't exist」：Playwright 的浏览器缓存被清掉了（2026-11-05）
+
+- 现象：`node --test` 里所有用 Playwright 的用例在 `launchPersistentContext` 报 `Executable doesn't exist at ~/Library/Caches/ms-playwright/chromium-…`，前一天还好好的。
+- 根因：`~/Library/Caches/ms-playwright/` 整个目录不在了（像是清理缓存时删掉的），项目依赖没变。
+- 正确做法：先 `ls ~/Library/Caches/ms-playwright/` 确认，再 `npx playwright install chromium` 装回（测试文件开头写着要用 Playwright 自带的 Chromium）；不要改测试或换浏览器绕过去。
+- 证据：2026-11-05 重装后 `chromium-1248` 在，`ℹ pass 43`。
+- 升级：未升级。

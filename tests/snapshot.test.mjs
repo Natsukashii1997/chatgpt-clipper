@@ -15,6 +15,8 @@ const FIXTURE = fs.readFileSync(path.join(ROOT, 'tests/fixtures/card-answer.html
 const URL = 'https://chatgpt.com/c/fixture';
 const CLAUDE_FIXTURE = fs.readFileSync(path.join(ROOT, 'tests/fixtures/claude-answer.html'), 'utf8');
 const CLAUDE_URL = 'https://claude.ai/chat/fixture', CLAUDE_BROKEN_URL = 'https://claude.ai/chat/broken';
+// Claude Code 的会话页：同一份回答标记，但不是聊天对话
+const CLAUDE_CODE_URL = 'https://claude.ai/code/session_fixture';
 // 多轮对话，虚拟列表（整段收藏用）
 const THREAD_FIXTURE = fs.readFileSync(path.join(ROOT, 'tests/fixtures/claude-thread.html'), 'utf8'), THREAD_URL = 'https://claude.ai/chat/thread';
 // 第十节的外部资源：字体与页面同源；图片跨域且不带 CORS 头，和真实页面的 images.openai.com 一样内容脚本读不到
@@ -44,6 +46,7 @@ before(async () => {
     if (url.startsWith(URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: FIXTURE });
     if (url.startsWith(CLAUDE_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: CLAUDE_FIXTURE });
     if (url.startsWith(THREAD_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: THREAD_FIXTURE });
+    if (url.startsWith(CLAUDE_CODE_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: CLAUDE_FIXTURE });
     // 模拟 Claude 改版：回答换了标记，插件认不出
     if (url.startsWith(CLAUDE_BROKEN_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: CLAUDE_FIXTURE.replaceAll('data-testid="assistant-message"', 'data-testid="assistant-turn"') });
     if (url === FONT_URL) return route.fulfill({ contentType: 'font/ttf', body: FONT });
@@ -614,6 +617,15 @@ describe('Claude 网页版', () => {
     assert.match(decodeURIComponent(href.split('&file=')[1]), /^00 待整理\/ChatGPT收藏\/\d{4}-\d{2}-\d{2} 快速排序示例\/快速排序示例$/);
     await loc.click();
     await kv('delete');
+  });
+
+  test('Claude Code 的会话页（claude.ai/code/…）不挂丝带；同样的页面放在对话页就挂', async () => {
+    const pg = await ctx.newPage();
+    await pg.goto(CLAUDE_CODE_URL);
+    await pg.waitForTimeout(1500);   // 插件每次页面变化后 300ms 扫一遍
+    assert.equal(await pg.locator('clipper-ribbon').count(), 0, 'Claude Code 会话页不该有丝带');
+    assert.equal(await cp.locator(`${MSG} clipper-ribbon`).count(), 1, '对话页照常有丝带');
+    await pg.close();
   });
 
   test('改版自检：对话页 10 秒后一条回答都没认出来，右下角提醒一次；正常页面不提醒', async () => {

@@ -24,6 +24,9 @@ const TITLE_SELECTORS = ['h1, h2, h3, h4, h5, h6'];
 export const ANSWER_GUTTER = 20;
 
 export function findAnswers(root: ParentNode = document): HTMLElement[] {
+  // Claude 只认对话页：Claude Code 的会话页（claude.ai/code/…）也用 assistant-message，不能挂丝带（2026-11-05 常浩发现）。
+  // ChatGPT 不限：临时对话的地址里没有 /c/
+  if (CLAUDE && !inChat()) return [];
   return [...root.querySelectorAll<HTMLElement>(ANSWER_SELECTOR)];
 }
 

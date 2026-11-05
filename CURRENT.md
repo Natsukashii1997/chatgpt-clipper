@@ -1,6 +1,17 @@
 # 当前状态
 
-更新：2026-11-04。M2 增强续五项全部做完：写一句、改版自检（`ea1f7f4`），跳回原回答、在 Obsidian 里打开（`80d4acf`），只收选中段落（`c3eab48`）已提交；本轮做完第 3 批「整段收藏」（拉长书签，FR-13），常浩真实页面试过，已提交（`3f6fd25`）；之后丝带样式改成竖排字的浅色荧光笔（「丝带统一」A 版 +「丝带清晰度」B 版），常浩真实页面看过，已提交。下一步：等常浩定。
+更新：2026-11-05。M2 增强续五项和丝带新样式都已提交（`3f6fd25`、`2851da4`）；本轮修了「Claude Code 会话页也挂丝带」，真实页面复验通过，已提交。下一步：等常浩定。
+
+## Claude Code 会话页不挂丝带（2026-11-05，Claude，常浩截图问「这啥情况」，看过原因和修法后说“修复”，并给了一个会话页让 Claude 测试，复验后“提交”；已提交、无需发布）
+
+- 时间：开工 `2026-11-05 13:55`（约），本节写于 `2026-11-05 14:13`。★ 来由：常浩在网页上看 Claude Code 会话，每条消息左边都叠着收藏丝带。
+- 改了哪些文件：`src/lib/adapter.ts`（`findAnswers`：Claude 不在对话页 `/chat/…` 时一条回答都不认，丝带、节选、整段收藏都跟着不出现；ChatGPT 不变）；`tests/snapshot.test.mjs`（新用例：`claude.ai/code/session_fixture` 放同一份 Claude 测试页，不该有丝带，对话页照常有）；`docs/LESSONS.md`（L-15、L-16）。
+- 测试：`node --test tests/*.test.mjs` 原样结果 `ℹ pass 43` / `ℹ fail 0`；`npm run compile` 无报错；`node scripts/check-rules.mjs` 通过。反向验证：去掉 `inChat()` 判断，新用例报红（「Claude Code 会话页不该有丝带」）。中途：Playwright 的浏览器缓存整个不在了，测试全挂，`npx playwright install chromium` 装回（L-16）。
+- 验证：Claude in Chrome 只读打开常浩给的会话页 `claude.ai/code/session_01Jp…`，修复前：3 条 `assistant-message`、3 条丝带（确认原因）；没读会话内容。常浩刷新插件后复验：同一会话页 2 条 `assistant-message`、0 条丝带；常浩的 Claude 测试对话 `claude.ai/chat/1a83…` 4 条回答、4 条丝带，照常。读完关了标签页。
+- 截图：无。
+- 发布与回读：无需发布；已重新 `npm run zip`。
+- 与授权不一致之处、遗留问题、范围外发现：claude.ai 的分享页（`/share/…`）、项目页等非 `/chat/` 页面现在也不挂丝带，原来也没当作支持范围。
+- 本轮新坑：L-15、L-16。
 
 ## 丝带统一：字竖着写在丝带上（2026-11-04，Claude，常浩提出选中和整段样式统一、整段也做成荧光笔，看过三版网页后选“A 紫色反斜纹”，真实页面看后嫌“不是很清楚”，再看三版后选“B”浅色荧光笔，真实页面看后“清楚了，提交”；已提交、无需发布）
 
