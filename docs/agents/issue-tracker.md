@@ -1,6 +1,6 @@
 # Issue 看板：GitHub
 
-本仓库的需求、规格和任务都放在 GitHub Issues（`Natsukashii1997/chatgpt-clipper`；仓库尚未创建，建仓前 `gh` 命令不可用），一律用本机已登录的 `gh`，在仓库目录里运行时 `gh` 会自己认出仓库。
+本仓库的需求、规格和任务都放在 GitHub Issues（`Natsukashii1997/chatgpt-clipper`，私有，2026-11-07 建），一律用本机已登录的 `gh`，在仓库目录里运行时 `gh` 会自己认出仓库。
 
 ## 操作
 
