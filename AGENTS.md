@@ -74,6 +74,17 @@ single-context：根目录 `GLOSSARY.md` 与 `docs/adr/`，用到时再建。见
 - 定位 ChatGPT 页面元素只用稳定的数据属性（如 `data-chatgpt-search-unit-key`），不依赖带哈希后缀的类名；选择器集中在一个适配模块里。
 - 笔记和页面上的时间经统一的格式化函数按北京时间显示，不直接截取 ISO 字符串（全局坑 G-02，`check-rules` 会查）。
 
+## AI 接入
+
+本应用当前不调用 AI：定位回答、截长图、生成笔记都在本机浏览器里完成，没有任何内容由 AI 替本应用产出（2026-11-07 核实）。
+
+- 数据对象（只读取、存档，不算执行方）：
+  - ChatGPT 网页 `chatgpt.com`：用户点选的那条回答、选中的段落或整段对话，从页面上读取；回答里的图片由后台从 `images.openai.com`、`*.oaiusercontent.com` 取（不带 cookie，见 `wxt.config.ts` 的 `host_permissions`）。
+  - Claude 网页 `claude.ai`：只认对话页 `/chat/…`，读取方式同上。
+  - 产出写到：用户在设置页选定的 Obsidian 文件夹；没选或写不进时退回 Chrome 下载目录 `chatgpt-clipper/`；单条和节选收藏的长图同时复制到剪贴板（FR-14）。
+- 对外开放：无（没有 MCP，没有 `externally_connectable`，不给外部程序或其他扩展留接口）。
+- 第一次加 AI 功能时，按全局规则 P-13（`~/.claude/CLAUDE.md` 第 14 节「应用里的 AI 接入写进设置」）补设置栏，并改写本节。
+
 ## 交接格式
 
 每轮完成后，在 CURRENT.md 顶部新增一节（旧节保留在下面，过长时归档到 `docs/history/`），骨架照抄 [docs/templates/handoff.md](docs/templates/handoff.md)；`tests/handoff-format.test.mjs` 会检查顶部一节有没有日期、「时间：开工」「测试：」「本轮新坑：」三行，新坑编号在 LESSONS 里要存在。每一行怎么写、报告与验收的防伪造五条见 [OPERATIONS](docs/OPERATIONS.md)「交接写法」「报告与验收」；没做就写「未做」。
