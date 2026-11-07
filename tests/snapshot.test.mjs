@@ -40,6 +40,8 @@ before(async () => {
     downloadsPath: path.join(dir, 'downloads'),
     args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`],
   });
+  // 测试里要读剪贴板核对长图（FR-14）；用的是 Mac 的系统剪贴板，跑完会被清空（L-17）
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
   // 只放行测试页，其余请求一律拦掉，顺带保证快照不依赖网络
   await ctx.route('**/*', route => {
     const url = route.request().url();
@@ -134,6 +136,15 @@ async function setVault(sw) {
 after(async () => {
   await ctx?.close();
   if (dir) fs.rmSync(dir, { recursive: true, force: true });
+});
+
+/** 剪贴板里的内容：有图片返回 PNG 的 [宽, 高]，否则返回文字 */
+const clipboard = pg => pg.evaluate(async () => {
+  for (const item of await navigator.clipboard.read()) {
+    if (item.types.includes('image/png')) { const v = new DataView(await (await item.getType('image/png')).arrayBuffer()); return [v.getUint32(16), v.getUint32(20)]; }
+    if (item.types.includes('text/plain')) return (await item.getType('text/plain')).text();
+  }
+  return null;
 });
 
 // Playwright 把下载的文件改成随机名，按数据类型找
@@ -240,6 +251,12 @@ test('丝带落在回答左侧空白里，不被外层裁剪容器裁掉', () =>
 test('进度卡里的回答标题取看得见的第一个标题，跳过读屏专用的隐藏标题', () => {
   assert.match(result.card, /\n一、目标与范围\n/);
   assert.doesNotMatch(result.card, /ChatGPT 说/);
+});
+
+test('收藏一整条回答：长图同时放进剪贴板，进度卡 PNG 一步写「已复制」（FR-14）', async () => {
+  assert.match(result.card, /PNG 文件\n\d+px · 已复制\n/, result.card);
+  const buf = png();
+  assert.deepEqual(await clipboard(page), [buf.readUInt32BE(16), buf.readUInt32BE(20)]);
 });
 
 test('PNG 宽度与回答一致，高度 = 回答高度 + 代码框展开多出的高度（≥4000px 长图，M1 验收 P9）', () => {
@@ -734,6 +751,15 @@ describe('只收选中段落（荧光笔丝带）', () => {
     assert.equal(await cp.locator(`${MSG} [data-clipper-cut]`).count(), 0, '收完要清掉临时记号');
   });
 
+  test('节选收藏：剪贴板里是只有选中几块的那张长图（FR-14）', async () => {
+    await select(cp, `${MSG} .standard-markdown`, '快速排序示例', '带注释');
+    const card = await collect(cp, MSG);
+    assert.match(card, /PNG 文件\n\d+px · 已复制\n/, card);
+    const v = await vault(), png = Buffer.from(v[Object.keys(v).find(d => d.includes('（节选）'))].png);
+    assert.deepEqual(await clipboard(cp), [png.readUInt32BE(16), png.readUInt32BE(20)]);
+    await cp.evaluate(() => getSelection().removeAllRanges());
+  });
+
   test('Claude：同样几块再收一次覆盖原节选；选了别的块另存一份', async () => {
     await select(cp, `${MSG} .standard-markdown`, '快速排序示例', '带注释');
     await collect(cp, MSG);
@@ -890,11 +916,14 @@ describe('整段收藏（拉长书签）', () => {
     assert.match(await card.innerText(), /^已收藏\n/);
   });
 
-  test('ChatGPT：拉丝带松手，存下 2 张长图', async () => {
+  test('ChatGPT：拉丝带松手，存下 2 张长图；整段收藏不动剪贴板（FR-14）', async () => {
     await mark(page);
+    await page.bringToFront();
+    await page.evaluate(() => navigator.clipboard.writeText('整段收藏前的剪贴板'));
     await page.locator(ANSWER).scrollIntoViewIfNeeded();
     await pull(page, page.locator(`${ANSWER} clipper-ribbon button`), 150);
     assert.match(await done(page), /^已收藏整段\n/);
+    assert.equal(await clipboard(page), '整段收藏前的剪贴板');
     const all = await threads(), name = Object.keys(all).find(d => !d.includes('第 1 问'));
     assert.deepEqual(Object.keys(all[name]).filter(f => f.endsWith('.png')).sort(), ['answer-01.png', 'answer-02.png']);
   });

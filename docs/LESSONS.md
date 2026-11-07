@@ -156,3 +156,11 @@
 - 正确做法：先 `ls ~/Library/Caches/ms-playwright/` 确认，再 `npx playwright install chromium` 装回（测试文件开头写着要用 Playwright 自带的 Chromium）；不要改测试或换浏览器绕过去。
 - 证据：2026-11-05 重装后 `chromium-1248` 在，`ℹ pass 43`。
 - 升级：未升级。
+
+## L-17 跑测试会清掉 Mac 的系统剪贴板（2026-11-07）
+
+- 现象：`node --test tests/*.test.mjs` 跑完，原来复制的文字没了，`osascript -e 'clipboard info'` 只剩长度 0 的文字。
+- 根因：FR-14 的用例让插件写剪贴板、测试再读回来核对；Playwright 无头 Chromium 在 Mac 上用的就是系统剪贴板，浏览器关掉后它放进去的内容也跟着失效。
+- 正确做法：跑全量测试前别在剪贴板里放要用的东西；不要为此删掉剪贴板用例或改成只看进度卡文字（只看文字测不出图到底放没放进去）。
+- 证据：2026-11-07 跑测试前 `pbcopy` 放一段文字，跑完 `pbpaste` 为空。
+- 升级：未升级。

@@ -94,6 +94,8 @@ const CUT = 'data-clipper-cut';
 async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blocks?: HTMLElement[]) {
   if (busy.has(el)) return;
   busy.add(el);
+  // 要在第一个 await 之前：还在点击里，剪贴板才肯收
+  const clip = copyLater();
   setRibbon('busy');
   // 回答没有标题就用提问，最多 30 字（M1 验收 P12）
   const title = (answerTitle(el) || answerQuestion(el).replace(/\s+/g, ' ').trim().slice(0, 30)).slice(0, 120), started = new Date(), answerId = await answerFingerprint(el);
@@ -134,14 +136,17 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blo
       await nextFrame();
       try {
         await embedResources(snap, fetchImage);
-        files.push({ name: 'answer.png', url: await blobToDataUrl(await toPng(snap)) });
+        const png = await toPng(snap);
+        clip.give(png);
+        files.push({ name: 'answer.png', url: await blobToDataUrl(png) });
         const short = snap.height < pageHeight / 2;
         if (short) warns.push(`长图只有页面高度的 ${Math.round((snap.height / pageHeight) * 100)}%`);
-        card.step(1, short ? 'warn' : 'ok', `${snap.height}px`);
+        card.step(1, short ? 'warn' : 'ok', `${snap.height}px · ${(await clip.done()) ?'已复制' : '未复制'}`);
       } catch (e) {
         fail(1, 'PNG 文件', e);
       }
     }
+    clip.drop();   // 长图没做成：放弃这次复制（已交出去的不受影响）
     card.step(2, 'on');
     await nextFrame();
     try {
@@ -345,6 +350,17 @@ function cut(el: HTMLElement, keep: Set<HTMLElement>) {
 }
 
 /** 打开 obsidian:// 链接：浏览器第一次会问要不要打开 Obsidian */
+/** 单条和节选收藏的长图同时放进剪贴板（FR-14，整段收藏不放）。做图要好几秒，做完再写已不算用户点击：
+ *  点击当时就交给剪贴板一个「等长图」的承诺，give 时才真正写入。done()：交出长图后等写完，写成 true，失败或 3 秒没写成 false，不影响收藏 */
+function copyLater() {
+  let give!: (b: Blob) => void, drop!: () => void;
+  const png = new Promise<Blob>((res, rej) => { give = res; drop = () => rej(new Error('长图没做成')); });
+  png.catch(() => undefined);
+  const write = navigator.clipboard.write([new ClipboardItem({ 'image/png': png })])
+    .then(() => true, e => { console.warn('[chatgpt-clipper] 长图没能放进剪贴板', e); return false; });
+  return { give, drop, done: () => Promise.race([write, new Promise<boolean>(r => setTimeout(r, 3000, false))]) };
+}
+
 function openLink(url: string) {
   const a = document.createElement('a');
   a.href = url;
