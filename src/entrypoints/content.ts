@@ -1,4 +1,4 @@
-import { answerBlocks, answerChars, answerFingerprint, answerKey, answerQuestion, answerTitle, findAnswers, inChat, NOISE, selectedBlocks, SITE_NAME, userText } from '@/lib/adapter';
+import { answerBlocks, answerChars, answerFingerprint, countQuestions, answerKey, answerQuestion, answerTitle, findAnswers, inChat, NOISE, selectedBlocks, SITE_NAME, userText } from '@/lib/adapter';
 import { answerToMarkdown, buildNote, buildThreadNote, readCodeEditors, type CodeRead, type ThreadRound } from '@/lib/markdown';
 import type { DownloadFile, FailCode, Request, Response } from '@/lib/messages';
 import { clipHash, jumpToClip } from '@/lib/jump';
@@ -57,21 +57,34 @@ function picked(el: HTMLElement): HTMLElement[] {
   return r.intersectsNode(el) ? selectedBlocks(el, r) : [];
 }
 
-// 进入对话页：带 #clip- 的（从笔记跳回）去找那条回答；改版自检（2026-11-04 用户选定 A 版）：打开 10 秒后一条回答都没认出来，提醒一次（每个对话一次）
+// 进入对话页：带 #clip- 的（从笔记跳回）去找那条回答。
+// 改版自检（2026-11-04 用户选定 A 版）：页面上已有两个以上提问、却一条回答都没认出来，并且连续 10 秒都这样，才提醒（每个对话一次）。
+// 页面还在加载（提问还没出来）、第一问还在生成（只有一个提问）都不算；提醒之后认出回答了、或换了对话，提醒自动收起（2026-11-07 常浩反馈：丝带挂上了还在提醒、页面没加载完就先弹）
 const CHECK_AFTER = 10_000;
-let watched = '', watchTimer = 0;
+let watched = '', watchTimer = 0, toast: HTMLElement | undefined;
 const warned = new Set<string>();
+const missing = () => inChat() && !findAnswers().length && countQuestions() >= 2;
 function watchChat() {
-  if (location.href === watched) return;
-  watched = location.href;
-  clearTimeout(watchTimer);
-  if (!inChat()) return;
-  void jumpToClip();
-  const url = location.href;
+  if (location.href !== watched) {
+    watched = location.href;
+    clearTimeout(watchTimer);
+    watchTimer = 0;
+    toast?.remove();
+    if (inChat()) void jumpToClip();
+  }
+  if (!missing()) {
+    clearTimeout(watchTimer);
+    watchTimer = 0;
+    if (findAnswers().length) toast?.remove();
+    return;
+  }
+  if (watchTimer || warned.has(watched)) return;
+  const url = watched;
   watchTimer = window.setTimeout(() => {
-    if (location.href !== url || warned.has(url) || findAnswers().length) return;
+    watchTimer = 0;
+    if (location.href !== url || !missing()) return;
     warned.add(url);
-    notice('收藏按钮没挂上', `这页有对话，但插件没认出回答，${SITE_NAME} 可能改版了。`);
+    toast = notice('收藏按钮没挂上', `这页有对话，但插件没认出回答，${SITE_NAME} 可能改版了。`);
   }, CHECK_AFTER);
 }
 

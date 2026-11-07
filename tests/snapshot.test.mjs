@@ -14,7 +14,11 @@ const EXT = path.join(ROOT, '.output/chrome-mv3');
 const FIXTURE = fs.readFileSync(path.join(ROOT, 'tests/fixtures/card-answer.html'), 'utf8');
 const URL = 'https://chatgpt.com/c/fixture';
 const CLAUDE_FIXTURE = fs.readFileSync(path.join(ROOT, 'tests/fixtures/claude-answer.html'), 'utf8');
-const CLAUDE_URL = 'https://claude.ai/chat/fixture', CLAUDE_BROKEN_URL = 'https://claude.ai/chat/broken';
+const CLAUDE_URL = 'https://claude.ai/chat/fixture';
+// 改版自检的误报场景：对话 12 秒后才出来（页面还在加载）；只有一问、回答还没出来（第一问还在生成）
+const CLAUDE_SLOW_URL = 'https://claude.ai/chat/slow', CLAUDE_THINKING_URL = 'https://claude.ai/chat/thinking';
+// 改版：ChatGPT 测试页（两问两答）的回答标记改掉，插件认不出
+const BROKEN_URL = 'https://chatgpt.com/c/broken';
 // Claude Code 的会话页：同一份回答标记，但不是聊天对话
 const CLAUDE_CODE_URL = 'https://claude.ai/code/session_fixture';
 // 多轮对话，虚拟列表（整段收藏用）
@@ -50,7 +54,11 @@ before(async () => {
     if (url.startsWith(THREAD_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: THREAD_FIXTURE });
     if (url.startsWith(CLAUDE_CODE_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: CLAUDE_FIXTURE });
     // 模拟 Claude 改版：回答换了标记，插件认不出
-    if (url.startsWith(CLAUDE_BROKEN_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: CLAUDE_FIXTURE.replaceAll('data-testid="assistant-message"', 'data-testid="assistant-turn"') });
+    if (url.startsWith(BROKEN_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: FIXTURE.replaceAll(':assistant"', ':assistant-x"') });
+    if (url.startsWith(CLAUDE_SLOW_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8',
+      body: CLAUDE_FIXTURE.replace('</body>', '<script>{ const b = document.body, kids = [...b.childNodes]; kids.forEach(k => k.remove()); setTimeout(() => kids.forEach(k => b.appendChild(k)), 12_000); }</script></body>') });
+    if (url.startsWith(CLAUDE_THINKING_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8',
+      body: CLAUDE_FIXTURE.replace('</body>', '<script>document.querySelectorAll(\'[data-testid="user-message"]\').forEach((u, i) => i && u.remove()); document.querySelectorAll(\'[data-testid="assistant-message"]\').forEach(a => a.remove());</script></body>') });
     if (url === FONT_URL) return route.fulfill({ contentType: 'font/ttf', body: FONT });
     if (url === IMAGE_URL) return route.fulfill({ contentType: 'image/svg+xml', body: IMAGE });
     return route.abort();
@@ -645,17 +653,29 @@ describe('Claude 网页版', () => {
     await pg.close();
   });
 
-  test('改版自检：对话页 10 秒后一条回答都没认出来，右下角提醒一次；正常页面不提醒', async () => {
-    const broken = await ctx.newPage();
-    await broken.goto(CLAUDE_BROKEN_URL);
-    await new Promise(r => setTimeout(r, 11_000));
+  test('改版自检：有两问以上、却连续 10 秒一条回答都没认出来，右下角提醒一次，之后认出回答就自动收起；页面还在加载、第一问还在生成、正常页面都不提醒', async () => {
+    const [broken, slow, thinking] = await Promise.all([BROKEN_URL, CLAUDE_SLOW_URL, CLAUDE_THINKING_URL].map(async u => {
+      const pg = await ctx.newPage();
+      await pg.goto(u);
+      return pg;
+    }));
+    assert.equal(await thinking.locator('[data-testid="user-message"]').count(), 1);
+    await new Promise(r => setTimeout(r, 12_500));
     const toast = broken.locator('clipper-dock .toast');
     assert.equal(await toast.count(), 1);
-    assert.match(await toast.innerText(), /^!\n收藏按钮没挂上\n这页有对话，但插件没认出回答，Claude 可能改版了。\n✕$/);
-    await toast.locator('button').click();
-    assert.equal(await toast.count(), 0);
+    assert.match(await toast.innerText(), /^!\n收藏按钮没挂上\n这页有对话，但插件没认出回答，ChatGPT 可能改版了。\n✕$/);
+    assert.equal(await slow.locator('clipper-dock .toast').count(), 0, '页面还在加载（对话还没出来）不该提醒');
+    await slow.locator('clipper-ribbon').first().waitFor({ state: 'attached', timeout: 3_000 });
+    assert.equal(await thinking.locator('clipper-dock .toast').count(), 0, '只有一问、回答还没出来（还在生成）不该提醒');
     assert.equal(await cp.locator('clipper-dock .toast').count(), 0, '正常页面不该提醒');
-    await broken.close();
+    // 回答后来认出来了（这里把标记改回去，再插一个节点让插件重新扫描）：丝带挂上，提醒自动收起
+    await broken.evaluate(() => {
+      document.querySelectorAll('[data-chatgpt-search-unit-key$=":assistant-x"]').forEach(a => a.dataset.chatgptSearchUnitKey = a.dataset.chatgptSearchUnitKey.replace(/-x$/, ''));
+      document.body.append(document.createElement('div'));
+    });
+    await broken.locator('clipper-ribbon').first().waitFor({ state: 'attached', timeout: 3_000 });
+    await toast.waitFor({ state: 'detached', timeout: 2_000 });
+    await Promise.all([broken, slow, thinking].map(pg => pg.close()));
   });
 });
 

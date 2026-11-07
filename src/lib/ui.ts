@@ -298,7 +298,8 @@ export function flashAnswer(answer: HTMLElement) {
 }
 
 /** 右下角一条黄色提醒，点 ✕ 关（改版自检：丝带一条都没挂上） */
-export function notice(title: string, text: string) {
+/** 右下角提醒，返回提醒元素（调用方可自己收起） */
+export function notice(title: string, text: string): HTMLElement {
   const el = document.createElement('div');
   el.className = 'toast';
   el.innerHTML = '<span class="ic">!</span><div><b></b><div class="s"></div></div><button title="关闭" aria-label="关闭">✕</button>';
@@ -306,6 +307,7 @@ export function notice(title: string, text: string) {
   el.querySelector('.s')!.textContent = text;
   el.querySelector('button')!.addEventListener('click', () => el.remove());
   dock().appendChild(el);
+  return el;
 }
 
 function escape(s: string): string {

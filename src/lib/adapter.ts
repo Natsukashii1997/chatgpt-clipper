@@ -17,6 +17,8 @@ export const NOISE = CLAUDE ? '[data-cds="TurnStatus"], :has(> [data-testid="mes
 const CHAT_PATH = CLAUDE ? /^\/chat\/[^/]/ : /\/c\/[^/]/;
 export const inChat = () => CHAT_PATH.test(location.pathname);
 export const SITE_NAME = CLAUDE ? 'Claude' : 'ChatGPT';
+/** 页面上的提问条数（改版自检用：有对话却认不出回答） */
+export const countQuestions = () => document.querySelectorAll(USER_SELECTOR).length;
 
 /** 给收藏起名：回答里的标题；没有标题时由调用方改用提问（用户 2026-11-02 定，M1 验收 P12） */
 const TITLE_SELECTORS = ['h1, h2, h3, h4, h5, h6'];
