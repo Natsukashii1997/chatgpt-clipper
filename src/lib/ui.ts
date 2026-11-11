@@ -81,10 +81,13 @@ button.a:hover{background:#333}
 .pdf .sp{width:12px;height:12px;border-radius:50%;border:2px solid #c9cfdb;border-top-color:#2f6bff;animation:spin .8s linear infinite;box-sizing:border-box}
 .toast{background:#fff;border:1px solid #f1d8a8;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.12);padding:10px 12px;display:flex;gap:9px;align-items:flex-start}
 .toast .ic{width:20px;height:20px;border-radius:50%;background:#f0a400;color:#fff;font-weight:700;display:grid;place-items:center;flex:none}
+.toast .bd{display:grid;gap:7px;min-width:0;flex:1}
 .toast b{display:block;font-size:12.5px}
 .toast .s{color:#6b6b6b}
-.toast button{font:inherit;color:#a3a3a3;background:none;border:0;padding:0;margin-left:auto;cursor:pointer;flex:none}
-.toast button:hover{color:#0d0d0d}`;
+.toast .x{font:inherit;color:#a3a3a3;background:none;border:0;padding:0;cursor:pointer;flex:none}
+.toast .x:hover{color:#0d0d0d}
+.toast .acts button{font:inherit;font-size:12px;border-radius:7px;padding:4px 10px;cursor:pointer;background:#0d0d0d;color:#fff;border:1px solid #0d0d0d}
+.toast .acts button:hover{background:#333}`;
 
 function shadowHost(tag: string, css: string): { host: HTMLElement; root: ShadowRoot } {
   const host = document.createElement(tag);
@@ -276,15 +279,28 @@ export function flashAnswer(answer: HTMLElement) {
     ?.animate([{ background: '#ffb020', opacity: 1 }, { background: '#ffb020', opacity: 1, offset: 0.65 }, {}], timing);
 }
 
-/** 右下角一条黄色提醒，点 ✕ 关（改版自检：丝带一条都没挂上） */
-/** 右下角提醒，返回提醒元素（调用方可自己收起） */
-export function notice(title: string, text: string): HTMLElement {
+/** 提醒上的按钮：点了以后按钮那一行换成 run 返回的字（没返回就不换） */
+export interface NoticeAct { label: string; run: () => string | void | Promise<string | void> }
+
+/** 右下角一条黄色提醒，点 ✕ 关；acts 是告诉用户下一步的按钮。返回提醒元素（调用方可自己收起） */
+export function notice(title: string, text: string, acts: NoticeAct[] = []): HTMLElement {
   const el = document.createElement('div');
   el.className = 'toast';
-  el.innerHTML = '<span class="ic">!</span><div><b></b><div class="s"></div></div><button title="关闭" aria-label="关闭">✕</button>';
+  el.innerHTML = '<span class="ic">!</span><div class="bd"><div><b></b><div class="s"></div></div></div><button class="x" title="关闭" aria-label="关闭">✕</button>';
   el.querySelector('b')!.textContent = title;
   el.querySelector('.s')!.textContent = text;
-  el.querySelector('button')!.addEventListener('click', () => el.remove());
+  if (acts.length) {
+    const row = document.createElement('div');
+    row.className = 'acts';
+    for (const a of acts) {
+      const b = document.createElement('button');
+      b.textContent = a.label;
+      b.addEventListener('click', async () => { const said = await a.run(); if (said) row.textContent = said; });
+      row.appendChild(b);
+    }
+    el.querySelector('.bd')!.appendChild(row);
+  }
+  el.querySelector('.x')!.addEventListener('click', () => el.remove());
   dock().appendChild(el);
   return el;
 }
