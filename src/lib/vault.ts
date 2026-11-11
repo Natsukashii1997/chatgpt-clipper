@@ -1,7 +1,6 @@
 // Vault 目标文件夹：设置页（扩展自己的页面）选一次，目录句柄存 IndexedDB；后台取出来直接写。
 // 授权跟着扩展的来源走，不属于 chatgpt.com；后台不能弹授权窗口，授权失效时由设置页重新授权。
 
-import { readWhy, withWhy } from './why.ts';
 
 // TypeScript 自带的 DOM 类型还没有这几个 File System Access 接口
 declare global {
@@ -66,12 +65,9 @@ const setSaved = (id: string, v: Saved) => idb('readwrite', s => s.put(v, SAVED 
 /** 写一条收藏（FR-5）。新回答：新建文件夹，重名加序号。同一条回答：覆盖原文件夹；文件夹名里的标题和现在应有的不一样
  *  （命名规则调整、标题变了），且里面只有插件写的长图和一篇笔记，就改成新名字（日期沿用第一次收藏的）；原文件夹被整理走了就不写 */
 export async function saveCollection(dir: FileSystemDirectoryHandle, id: string, folder: string, files: VaultFile[]):
-  Promise<{ name: string; updated?: boolean; moved?: boolean; why?: string }> {
+  Promise<{ name: string; updated?: boolean; moved?: boolean }> {
   const prev = await getSaved(id), md = files.find(f => f.name.endsWith('.md')), note = md?.name;
   if (prev && !(await hasFolder(dir, prev.folder))) return { name: prev.folder, moved: true };
-  // 再收藏时沿用旧笔记里写的「为什么存」（可能在 Obsidian 里改过）
-  const why = prev?.note ? readWhy(await readNote(dir, prev.folder, prev.note).catch(() => '')) : '';
-  if (md && why) md.data = withWhy(await text(md.data), why);
   let name = prev?.folder ?? await newFolder(dir, folder);
   if (prev && titlePart(prev.folder) !== titlePart(folder) && await onlyOurs(await dir.getDirectoryHandle(prev.folder), prev.note))
     name = await newFolder(dir, `${prev.folder.match(DATE)?.[0] ?? ''} ${titlePart(folder)}`.trim());
@@ -79,7 +75,7 @@ export async function saveCollection(dir: FileSystemDirectoryHandle, id: string,
   if (prev && name !== prev.folder) await dir.removeEntry(prev.folder, { recursive: true });
   else if (prev?.note && note && prev.note !== note) await (await dir.getDirectoryHandle(name)).removeEntry(prev.note).catch(() => undefined);
   await setSaved(id, { folder: name, note });
-  return { name, updated: !!prev, why };
+  return { name, updated: !!prev };
 }
 
 /** 整段收藏（FR-13）开头：定下写到哪个文件夹并建好。id 是对话地址：收藏过且原文件夹还在就沿用（覆盖）；
@@ -93,35 +89,19 @@ export async function threadFolder(dir: FileSystemDirectoryHandle, id: string, f
   return { name };
 }
 
-/** 整段收藏结尾（长图已逐张写好）：写笔记，沿用旧笔记里的「为什么存」；删掉上次留下、这次没有的长图（answer-NN.png）和改了名的旧笔记；记下收藏 */
-export async function finishThread(dir: FileSystemDirectoryHandle, id: string, name: string, note: VaultFile, images: string[]): Promise<{ why: string }> {
+/** 整段收藏结尾（长图已逐张写好）：写笔记；删掉上次留下、这次没有的长图（answer-NN.png）和改了名的旧笔记；记下收藏 */
+export async function finishThread(dir: FileSystemDirectoryHandle, id: string, name: string, note: VaultFile, images: string[]) {
   const prev = await getSaved(id);
-  const why = prev?.note ? readWhy(await readNote(dir, name, prev.note).catch(() => '')) : '';
-  if (why) note.data = withWhy(await text(note.data), why);
   await writeFiles(dir, name, [note]);
   const sub = await dir.getDirectoryHandle(name), stale: string[] = [];
   for await (const [f, h] of sub.entries())
     if (h.kind === 'file' && ((THREAD_IMAGE.test(f) && !images.includes(f)) || (f === prev?.note && f !== note.name))) stale.push(f);
   for (const f of stale) await sub.removeEntry(f);
   await setSaved(id, { folder: name, note: note.name });
-  return { why };
 }
 
 /** 整段收藏的长图：answer-01.png、answer-02.png…… */
 export const THREAD_IMAGE = /^answer-\d+\.png$/;
-
-/** 收藏后补写「为什么存」：只改这条收藏的笔记，长图不动 */
-export async function saveWhy(dir: FileSystemDirectoryHandle, id: string, why: string) {
-  const prev = await getSaved(id);
-  if (!prev?.note || !(await hasFolder(dir, prev.folder))) throw new Error('笔记找不到了，可能被整理走了');
-  await writeFiles(dir, prev.folder, [{ name: prev.note, data: withWhy(await readNote(dir, prev.folder, prev.note), why) }]);
-}
-
-async function readNote(dir: FileSystemDirectoryHandle, folder: string, note: string): Promise<string> {
-  return (await (await (await dir.getDirectoryHandle(folder)).getFileHandle(note)).getFile()).text();
-}
-
-const text = (d: Blob | string) => (typeof d === 'string' ? Promise.resolve(d) : d.text());
 
 const DATE = /^\d{4}-\d{2}-\d{2}/;
 /** 文件夹名里的标题部分：去掉开头的日期和结尾的序号 */

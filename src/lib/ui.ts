@@ -68,17 +68,17 @@ li small{display:block;color:#6b6b6b;font-size:10px}
 .loc.link:hover .v .go{display:block}
 button.a{font:inherit;border:1px solid #0d0d0d;background:#0d0d0d;color:#fff;border-radius:7px;padding:3px 10px;cursor:pointer;flex:none}
 button.a:hover{background:#333}
-.why{margin-top:10px}
-.why input{box-sizing:border-box;width:100%;font:inherit;color:inherit;border:1px solid #d6d6d2;border-radius:7px;padding:5px 8px;outline:none;background:#fff}
-.why input:focus{border-color:#2f6bff;box-shadow:0 0 0 3px #eaf0ff}
-.why input::placeholder{color:#a3a3a3}
-.why .hint{display:none;color:#9a9a9a;font-size:10.5px;margin-top:4px}
-.why:focus-within .hint,.why .hint.err{display:block}
-.why .hint.err{color:#d93025}
-.said{margin-top:10px;padding:6px 9px;border-left:3px solid #10a37f;background:#f6fbf9;border-radius:0 6px 6px 0;display:flex;gap:6px;align-items:baseline}
-.said span{flex:1;min-width:0;overflow-wrap:anywhere}
-.said button{font:inherit;font-size:11px;color:#6b6b6b;background:none;border:0;padding:0;cursor:pointer;flex:none}
-.said button:hover{color:#0d0d0d}
+.pdf{margin-top:10px;display:flex;align-items:center;gap:8px;min-width:0}
+.pdf .pb{font:inherit;font-weight:600;border:1px solid #c9cfdb;background:#fff;color:#22324f;border-radius:7px;padding:4px 10px;cursor:pointer;display:flex;align-items:center;gap:6px;flex:none}
+.pdf .pb:hover{background:#f1f4fa}
+.pdf .pb[disabled]{cursor:progress;color:#6b6b6b;background:#fff}
+.pdf .n{color:#6b6b6b;font-size:11px;min-width:0}
+.pdf .ok{color:#22324f;font-weight:600;flex:1;min-width:0}
+.pdf .ok span{font-weight:400;color:#6b6b6b}
+.pdf .bad{color:#d93025;flex:1;min-width:0;overflow-wrap:anywhere}
+.pdf .lk{font:inherit;font-size:11px;background:none;border:0;color:#2f6bff;cursor:pointer;padding:0;flex:none}
+.pdf .lk:hover{text-decoration:underline}
+.pdf .sp{width:12px;height:12px;border-radius:50%;border:2px solid #c9cfdb;border-top-color:#2f6bff;animation:spin .8s linear infinite;box-sizing:border-box}
 .toast{background:#fff;border:1px solid #f1d8a8;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.12);padding:10px 12px;display:flex;gap:9px;align-items:flex-start}
 .toast .ic{width:20px;height:20px;border-radius:50%;background:#f0a400;color:#fff;font-weight:700;display:grid;place-items:center;flex:none}
 .toast b{display:block;font-size:12.5px}
@@ -174,6 +174,9 @@ const ICON: Record<StepState, string> = { '': '', on: '', ok: '✓', warn: '!', 
  *  open 整块可点（在 Obsidian 里打开），悬停时第二行换成 label；href 是要打开的链接（记在块上，便于排查） */
 export interface Place { icon: string; head: string; sub: string; warn?: boolean; open?: { label: string; href?: string; run: () => void } }
 
+/** 卡片底部的「导出 PDF」（FR-15，2026-11-10 常浩选 A 版）：run 导出，返回页数和「在访达中显示」 */
+export type Pdf = () => Promise<{ pages: number; show: () => void }>;
+
 /** 右下角一张进度卡（B 版，用户 2026-11-02 选定）：顶部是收藏状态，四步横排成一条进度线，每步下面一个短结果；结束时给「存到哪里」和操作按钮 */
 export function progressCard() {
   const el = document.createElement('div'), t0 = performance.now();
@@ -192,7 +195,7 @@ export function progressCard() {
     step(i: number, state: StepState, note = '') { states[i] = state; notes[i] = note; draw(); },
     /** 收藏过程中改顶部的状态（整段收藏：「正在读第 k 条」） */
     title(s: string) { headline = s; draw(); },
-    finish(ok: boolean, status: string, place: Place, action?: { label: string; run: () => void }, autoCloseMs = 0, why?: Why) {
+    finish(ok: boolean, status: string, place: Place, action?: { label: string; run: () => void }, autoCloseMs = 0, pdf?: Pdf) {
       headline = status;
       if (!ok) states.forEach((st, i) => { if (st === 'on') states[i] = 'bad'; });   // 没做完的那步算失败，不再转圈
       draw();
@@ -219,13 +222,13 @@ export function progressCard() {
         b.addEventListener('click', action.run);
         loc.appendChild(b);
       }
-      // 鼠标停在卡片上、正在写「为什么存」时不自动关
-      let typing = false;
+      // 鼠标停在卡片上、正在导出 PDF 时不自动关
+      let exporting = false;
       const arm = () => {
         clearTimeout(timer);
-        if (autoCloseMs && !typing && !el.matches(':hover')) timer = window.setTimeout(() => el.remove(), autoCloseMs);
+        if (autoCloseMs && !exporting && !el.matches(':hover')) timer = window.setTimeout(() => el.remove(), autoCloseMs);
       };
-      if (why) whyBox(el, why, t => { typing = t; arm(); });
+      if (pdf) pdfRow(el, pdf, busy => { exporting = busy; arm(); });
       el.addEventListener('mouseenter', () => clearTimeout(timer));
       el.addEventListener('mouseleave', arm);
       arm();
@@ -234,53 +237,29 @@ export function progressCard() {
   };
 }
 
-/** 收藏后补一句「为什么存」（2026-11-04 用户选定 A 版）：value 是笔记里已有的那句，save 把新写的补进笔记 */
-export interface Why { value: string; save: (why: string) => Promise<void> }
-
-function whyBox(card: HTMLElement, why: Why, typing: (t: boolean) => void) {
-  const box = document.createElement('div');
-  card.appendChild(box);
-  let value = why.value;
-  const said = () => {
-    box.className = 'said';
-    box.innerHTML = '<span></span><button>改</button>';
-    box.querySelector('span')!.textContent = value;
-    box.querySelector('button')!.addEventListener('click', () => edit(true));
+/** 导出 PDF 一行：按钮 + 「默认存储地址为「下载」」（常浩 2026-11-10 定的文案）→ 正在导出 → 已存到「下载」· N 页 + 在访达中显示；没导出成写原因 + 重试 */
+function pdfRow(card: HTMLElement, pdf: Pdf, busy: (b: boolean) => void) {
+  const row = document.createElement('div');
+  row.className = 'pdf';
+  card.appendChild(row);
+  const idle = () => {
+    row.innerHTML = '<button class="pb">📄 导出 PDF</button><span class="n">默认存储地址为「下载」</span>';
+    row.querySelector('button')!.addEventListener('click', go);
   };
-  const edit = (focus: boolean) => {
-    box.className = 'why';
-    box.innerHTML = '<input maxlength="200" placeholder="为什么存？写一句（可不填）"><div class="hint">回车记下 · Esc 不写了</div>';
-    const input = box.querySelector('input')!, hint = box.querySelector('.hint')!;
-    input.value = value;
-    const done = () => { typing(false); if (value) said(); else if (box.contains(input)) input.blur(); };
-    input.addEventListener('focus', () => typing(true));
-    input.addEventListener('blur', () => typing(false));
-    // 按键不往页面传：ChatGPT、Claude 会把键盘输入抢到自己的输入框
-    for (const t of ['keydown', 'keyup', 'keypress', 'input', 'beforeinput', 'paste'] as const) input.addEventListener(t, e => e.stopPropagation());
-    input.addEventListener('keydown', e => {
-      if (e.key === 'Escape') { input.value = value; done(); return; }
-      // 输入法选字时的回车不算
-      if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
-      const next = input.value.replace(/\s+/g, ' ').trim();
-      input.disabled = true;
-      hint.className = 'hint';
-      hint.textContent = '记下中…';
-      why.save(next).then(() => {
-        value = next;
-        input.disabled = false;
-        hint.textContent = '回车记下 · Esc 不写了';
-        done();
-      }, (err: Error) => {
-        input.disabled = false;
-        input.focus();
-        hint.className = 'hint err';
-        hint.textContent = `没记下：${err.message}`;
-      });
-    });
-    if (focus) input.focus();
+  const go = () => {
+    row.innerHTML = '<button class="pb" disabled><i class="sp"></i>正在导出 PDF…</button>';
+    busy(true);
+    pdf().then(({ pages, show }) => {
+      row.innerHTML = `<div class="ok">📄 已存到「下载」<span>· ${pages} 页</span></div><button class="lk">在访达中显示</button>`;
+      row.querySelector('button')!.addEventListener('click', show);
+    }, (e: Error) => {
+      console.error('[chatgpt-clipper] 导出 PDF 失败', e);
+      row.innerHTML = '<div class="bad"></div><button class="lk">重试</button>';
+      row.querySelector('.bad')!.textContent = `没导出成：${e.message}`;
+      row.querySelector('button')!.addEventListener('click', go);
+    }).finally(() => busy(false));
   };
-  if (value) said();
-  else edit(false);
+  idle();
 }
 
 /** 跳回原回答（2026-11-04 用户改选 C 版：开头一抹淡黄）：回答开头铺一层很淡的黄色、往下渐隐，没有边框；

@@ -3,9 +3,10 @@ import { answerToMarkdown, buildNote, buildThreadNote, readCodeEditors, type Cod
 import type { DownloadFile, FailCode, Request, Response } from '@/lib/messages';
 import { clipHash, jumpToClip } from '@/lib/jump';
 import { folderName, noteName } from '@/lib/naming';
+import { exportPdf, pdfAnswer, type PdfAnswer, type PdfDoc, type PdfRound } from '@/lib/pdf';
 import { embedResources, styler, takeSnapshot, toPng } from '@/lib/snapshot';
 import { readThread } from '@/lib/thread';
-import { mountRibbon, notice, progressCard, STEPS, UI_ATTR, type Place, type RibbonState, type Why } from '@/lib/ui';
+import { mountRibbon, notice, progressCard, STEPS, UI_ATTR, type Pdf, type Place, type RibbonState } from '@/lib/ui';
 
 export default defineContentScript({
   matches: ['https://chatgpt.com/*', 'https://claude.ai/*'],
@@ -130,7 +131,7 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blo
     if (blocks) cut(el, new Set(blocks));
     card.step(0, 'on');
     await nextFrame();
-    let snap, code: Map<Element, CodeRead> | undefined;
+    let snap, code: Map<Element, CodeRead> | undefined, pdfAns: PdfAnswer | undefined;
     try {
       // 长代码先读全，读的时候把每行连样式复制下来给长图用；转 MD 用同一份，不再滚第二遍
       const st = styler();
@@ -149,6 +150,7 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blo
       await nextFrame();
       try {
         await embedResources(snap, fetchImage);
+        pdfAns = pdfAnswer(snap);
         const png = await toPng(snap);
         clip.give(png);
         files.push({ name: 'answer.png', url: await blobToDataUrl(png) });
@@ -174,7 +176,10 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blo
       fail(2, 'MD 文件', e);
     }
     const partial = failed.length > 0;   // 快照、PNG 或 MD 没做成，存下来的不完整
-    let savedTo = '', firstId = 0, fix: FailCode | undefined, note = '', got = '', why: Why | undefined, open: Place['open'];
+    // 导出 PDF（FR-15）：快照做成了就能导，和存没存进 Obsidian 无关；节选只有选中的那几块。文件名同收藏文件夹
+    const pdf = pdfAns && pdfAction({ title: blocks ? `${title}（节选）` : title, site: SITE_NAME, url: `${location.origin}${location.pathname}${clipHash(answerId)}`,
+      captured: started, rounds: [{ question: answerQuestion(el), answers: [pdfAns] }] }, `${folderName(title, started)}${blocks ? '（节选）' : ''}`);
+    let savedTo = '', firstId = 0, fix: FailCode | undefined, note = '', got = '', open: Place['open'];
     if (files.length) {
       card.step(3, 'on');
       const folder = `${folderName(title, started)}${blocks ? '（节选）' : ''}`;
@@ -183,7 +188,6 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blo
         savedTo = res.path ?? '';
         note = res.moved ? '已收藏过' : res.updated ? '已更新' : '已存入';
         if (!res.moved && files[0]?.name.endsWith('.md')) {
-          why = { value: res.why ?? '', save: w => send({ type: 'why', id, why: w }).then(() => undefined) };
           // 点绿块在 Obsidian 里打开；没设置位置时点了去设置页
           open = res.open ? { label: '在 Obsidian 里打开 ↗', href: res.open, run: () => openLink(res.open!) }
             : { label: '设置 Obsidian 位置后可直接打开 ↗', run: () => void send({ type: 'options' }) };
@@ -214,7 +218,7 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blo
       card.finish(true, note === '已收藏过' ? '已收藏过' : warn ? '已收藏，但可能不完整' : note === '已更新' ? '已更新' : '已收藏', note === '已收藏过'
         ? { icon: '📁', head: name, sub: `原文件夹已不在「${dir}」里（可能整理走了），这次没有重写` }
         : warn ? { icon: '⚠️', head: warns.join('；'), sub: '页面可能改版了，能存的部分已存好', warn, open }
-        : { icon: '📁', head: name, sub: [date, dir].filter(Boolean).join(' · '), open }, undefined, warn ? 0 : 8000, why);
+        : { icon: '📁', head: name, sub: [date, dir].filter(Boolean).join(' · '), open }, undefined, warn ? 0 : 8000, pdf);
     } else {
       setRibbon('err');
       const headline = savedTo ? '已收藏（不完整）' : !firstId ? '收藏失败'
@@ -222,7 +226,7 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blo
       const action = fix
         ? { label: fix === 'no-folder' ? '去设置' : '去授权', run: () => void send({ type: 'options' }) }
         : { label: '重试', run: () => { card.close(); busy.delete(el); void capture(el, setRibbon, blocks); } };
-      card.finish(false, headline, { icon: savedTo ? '📁' : firstId ? '⬇️' : '⚠️', head: name, sub: failed.join('；') }, action);
+      card.finish(false, headline, { icon: savedTo ? '📁' : firstId ? '⬇️' : '⚠️', head: name, sub: failed.join('；') }, action, 0, pdf);
     }
   } catch (e) {
     // 插件刷新后没刷新页面：页面里还是旧脚本，和后台断了联系，发消息直接抛错（不走 .catch）
@@ -236,7 +240,7 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blo
   }
 }
 
-interface ThreadAnswer { id: string; png: string; height: number; body: string }
+interface ThreadAnswer { id: string; png: string; height: number; body: string; pdf: PdfAnswer }
 type ThreadPart = { role: 'user'; text: string } | ({ role: 'assistant' } & (ThreadAnswer | { error: string }));
 let threading = false;
 
@@ -275,15 +279,20 @@ async function captureThread() {
     card.title('收藏中…');
     card.step(0, missed ? 'warn' : 'ok', `${count} 条`);
     // 按顺序拼成一轮一轮；长图按回答的序号起名
-    const base = `${location.origin}${location.pathname}`, images: DownloadFile[] = [], rounds: ThreadRound[] = [];
+    const base = `${location.origin}${location.pathname}`, images: DownloadFile[] = [], rounds: ThreadRound[] = [], pdfRounds: PdfRound[] = [];
     let n = 0;
     for (const p of parts) {
-      if (p.role === 'user') { rounds.push({ question: p.text, answers: [] }); continue; }
-      if (!rounds.length) rounds.push({ question: '', answers: [] });
+      if (p.role === 'user') { rounds.push({ question: p.text, answers: [] }); pdfRounds.push({ question: p.text, answers: [] }); continue; }
+      if (!rounds.length) { rounds.push({ question: '', answers: [] }); pdfRounds.push({ question: '', answers: [] }); }
       const name = `answer-${String(++n).padStart(2, '0')}.png`;
-      if ('error' in p) { rounds.at(-1)!.answers.push({ link: base, image: '', body: '', error: p.error }); continue; }
+      if ('error' in p) {
+        rounds.at(-1)!.answers.push({ link: base, image: '', body: '', error: p.error });
+        pdfRounds.at(-1)!.answers.push({ error: p.error });
+        continue;
+      }
       images.push({ name, url: p.png });
       rounds.at(-1)!.answers.push({ link: `${base}${clipHash(p.id)}`, image: name, body: p.body });
+      pdfRounds.at(-1)!.answers.push(p.pdf);
     }
     card.step(1, images.length < n ? 'warn' : 'ok', `${images.length} 张`);
     const note: DownloadFile = { name: noteName(`${title}（整段）`),
@@ -291,6 +300,7 @@ async function captureThread() {
     card.step(2, 'ok', `${rounds.length} 问 ${n} 答`);
     card.step(3, 'on');
     const id = `thread:${base}`, folder = `${folderName(title, started)}（整段）`;
+    const pdf = pdfAction({ title: `${title}（整段）`, site: SITE_NAME, url: base, captured: started, rounds: pdfRounds, thread: true }, folder);
     const begin = (await browser.runtime.sendMessage({ type: 'thread-begin', id, folder } satisfies Request)
       .catch((e: Error) => ({ ok: false, error: e.message }))) as Response | undefined;
     if (begin?.ok) {
@@ -298,7 +308,7 @@ async function captureThread() {
       const head = sub.slice(date.length).trim() || title;
       if (begin.moved) {
         card.step(3, 'ok', '已收藏过');
-        card.finish(true, '已收藏过', { icon: '📁', head, sub: `原文件夹已不在「${dir}」里（可能整理走了），这次没有重写` }, undefined, 8000);
+        card.finish(true, '已收藏过', { icon: '📁', head, sub: `原文件夹已不在「${dir}」里（可能整理走了），这次没有重写` }, undefined, 8000, pdf);
         return;
       }
       for (const [i, file] of images.entries()) {
@@ -310,10 +320,9 @@ async function captureThread() {
       card.step(3, 'ok', status);
       const open: Place['open'] = end.open ? { label: '在 Obsidian 里打开 ↗', href: end.open, run: () => openLink(end.open!) }
         : { label: '设置 Obsidian 位置后可直接打开 ↗', run: () => void send({ type: 'options' }) };
-      const why: Why = { value: end.why ?? '', save: w => send({ type: 'why', id, why: w }).then(() => undefined) };
       card.finish(true, warn ? '已收藏，但可能不完整' : begin.updated ? '已更新整段' : '已收藏整段',
         warn ? { icon: '⚠️', head: warns.join('；'), sub: '能存的部分已存好', warn, open } : { icon: '📁', head, sub: [date, dir].filter(Boolean).join(' · '), open },
-        undefined, warn ? 0 : 8000, why);
+        undefined, warn ? 0 : 8000, pdf);
       return;
     }
     // 写不进 Vault：退回浏览器下载，一个文件一条消息；没选 Vault 文件夹只下载长图（同单条收藏）
@@ -324,7 +333,7 @@ async function captureThread() {
     const reason = noVault ? '无 Obsidian' : begin?.error ?? '后台无响应';
     card.finish(false, got ? `无法保存，${noVault ? '长图' : '文件'}已下载` : '收藏失败', { icon: got ? '⬇️' : '⚠️', head: title,
       sub: [got ? `${reason}，已下载 ${got} 个文件到 Chrome` : reason, ...warns].join('；') },
-      begin?.code ? { label: noVault ? '去设置' : '去授权', run: () => void send({ type: 'options' }) } : undefined);
+      begin?.code ? { label: noVault ? '去设置' : '去授权', run: () => void send({ type: 'options' }) } : undefined, 0, pdf);
   } catch (e) {
     console.error('[chatgpt-clipper] 整段收藏中断', e);
     card.finish(false, '整段收藏失败', { icon: '⚠️', head: title || document.title,
@@ -347,7 +356,7 @@ async function readAnswer(el: HTMLElement): Promise<ThreadAnswer> {
   const snap = takeSnapshot(el, { exclude: `[${UI_ATTR}]`, drop: NOISE, codeLines: new Map([...code].map(([e, c]) => [e, c.lines])) });
   const body = answerToMarkdown(el, { exclude: `[${UI_ATTR}]`, code });
   await embedResources(snap, fetchImage);
-  return { id, png: await blobToDataUrl(await toPng(snap)), height: snap.height, body };
+  return { id, png: await blobToDataUrl(await toPng(snap)), height: snap.height, body, pdf: pdfAnswer(snap) };
 }
 
 /** 给回答里不含要收的块的部分打 CUT：从回答往下，含要收的块就往里走，不含就整棵打上 */
@@ -360,6 +369,14 @@ function cut(el: HTMLElement, keep: Set<HTMLElement>) {
     }
   };
   walk(el);
+}
+
+/** 卡片上「导出 PDF」点了做什么：导出到「下载」，导好后「在访达中显示」打开这个文件所在位置 */
+function pdfAction(doc: PdfDoc, name: string): Pdf {
+  return async () => {
+    const r = await exportPdf(doc, name);
+    return { pages: r.pages, show: () => void send({ type: 'show', id: r.id }) };
+  };
 }
 
 /** 打开 obsidian:// 链接：浏览器第一次会问要不要打开 Obsidian */
