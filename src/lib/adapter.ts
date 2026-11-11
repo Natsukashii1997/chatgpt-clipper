@@ -20,6 +20,32 @@ export const SITE_NAME = CLAUDE ? 'Claude' : 'ChatGPT';
 /** 页面上的提问条数（改版自检用：有对话却认不出回答） */
 export const countQuestions = () => document.querySelectorAll(USER_SELECTOR).length;
 
+/** 改版时交给 Claude 的修复请求（FR-9）：只有页面结构的统计——选择器命中数、对话区的 data- 属性名和次数，
+ *  外加名字里带 testid、role、key、turn 的界面标记的取值（编号换成 ID、数字换成 N，回答标记改了一眼能看出）；
+ *  不含对话文字、对话编号、账号信息 */
+export function repairRequest(now: string, version: string): string {
+  const root = document.querySelector('main') ?? document.body;
+  const names = new Map<string, number>(), marks = new Set<string>();
+  for (const el of root.querySelectorAll('*'))
+    for (const a of el.attributes) {
+      if (!a.name.startsWith('data-') || a.name.startsWith('data-clipper')) continue;
+      names.set(a.name, (names.get(a.name) ?? 0) + 1);
+      if (/testid|role|key|turn/.test(a.name))
+        marks.add(`${a.name}="${a.value.replace(/[0-9a-f]{8,}(-[0-9a-f]{4,})*/gi, 'ID').replace(/\d+/g, 'N').slice(0, 50)}"`);
+    }
+  const top = [...names].sort((x, y) => y[1] - x[1]).slice(0, 30).map(([n, c]) => `${n} ×${c}`);
+  return [
+    `chatgpt-clipper 认不出 ${SITE_NAME} 的回答了，请重新侦察对话页（docs/recon/），改 src/lib/adapter.ts。`,
+    `- 时间：${now}（北京时间）`,
+    `- 页面：${location.hostname} 对话页，插件版本 ${version}`,
+    `- 回答选择器 ${ANSWER_SELECTOR}：${document.querySelectorAll(ANSWER_SELECTOR).length} 个`,
+    `- 提问选择器 ${USER_SELECTOR}：${countQuestions()} 个`,
+    '- 页面已静止 10 秒以上（不在生成、不在加载）',
+    `- 对话区的 data- 属性（名字 × 次数）：${top.join('，') || '无'}`,
+    `- 界面标记：${[...marks].slice(0, 40).join('，') || '无'}`,
+  ].join('\n');
+}
+
 /** 给收藏起名：回答里的标题；没有标题时由调用方改用提问（用户 2026-11-02 定，M1 验收 P12） */
 const TITLE_SELECTORS = ['h1, h2, h3, h4, h5, h6'];
 /** 回答左侧到 ChatGPT 外层裁剪容器（overflow-x: clip）的空白宽度，丝带只能画在这里面（2026-11-02 实测） */

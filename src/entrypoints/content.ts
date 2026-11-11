@@ -1,8 +1,8 @@
-import { answerBlocks, answerChars, answerFingerprint, countQuestions, answerKey, answerQuestion, answerTitle, findAnswers, inChat, NOISE, selectedBlocks, SITE_NAME, userText } from '@/lib/adapter';
+import { answerBlocks, answerChars, answerFingerprint, countQuestions, answerKey, answerQuestion, answerTitle, findAnswers, inChat, NOISE, repairRequest, selectedBlocks, SITE_NAME, userText } from '@/lib/adapter';
 import { answerToMarkdown, buildNote, buildThreadNote, readCodeEditors, type CodeRead, type ThreadRound } from '@/lib/markdown';
 import type { DownloadFile, FailCode, Request, Response } from '@/lib/messages';
 import { clipHash, jumpToClip } from '@/lib/jump';
-import { folderName, noteName } from '@/lib/naming';
+import { beijingTime, folderName, noteName } from '@/lib/naming';
 import { exportPdf, pdfAnswer, type PdfAnswer, type PdfDoc, type PdfRound } from '@/lib/pdf';
 import { embedResources, styler, takeSnapshot, toPng } from '@/lib/snapshot';
 import { readThread } from '@/lib/thread';
@@ -59,13 +59,53 @@ function picked(el: HTMLElement): HTMLElement[] {
 }
 
 // 进入对话页：带 #clip- 的（从笔记跳回）去找那条回答。
-// 改版自检（2026-11-04 用户选定 A 版）：页面上已有两个以上提问、却一条回答都没认出来，并且连续 10 秒都这样，才提醒（每个对话一次）。
-// 页面还在加载（提问还没出来）、第一问还在生成（只有一个提问）都不算；提醒之后认出回答了、或换了对话，提醒自动收起（2026-11-07 常浩反馈：丝带挂上了还在提醒、页面没加载完就先弹）
+// 改版自检（2026-11-04 用户选定 A 版）：页面上已有两个以上提问、却一条回答都没认出来，并且页面静止 10 秒还这样，才提醒（每个对话一次）。
+// 页面还在加载（提问还没出来）、第一问还在生成（只有一个提问）都不算；提醒之后认出回答了、或换了对话，提醒自动收起（2026-11-07 常浩反馈：丝带挂上了还在提醒、页面没加载完就先弹）。
+// 2026-11-11 常浩反馈提醒只说「可能改版了」、不知道怎么办，选 C 版「查清了才提醒」：页面还在变（生成中、加载中）就重新计时；
+// 插件更新过、页面还连着旧插件，提醒刷新；排除这些才说改版，提醒上直接给「复制修复请求」
 const CHECK_AFTER = 10_000;
-let watched = '', watchTimer = 0, toast: HTMLElement | undefined;
+let watched = '', watchTimer = 0, toast: HTMLElement | undefined, stale = false;
 const warned = new Set<string>();
 const missing = () => inChat() && !findAnswers().length && countQuestions() >= 2;
+const pageText = () => (document.querySelector('main') ?? document.body).textContent ?? '';
+
+/** 页面静止 10 秒仍认不出回答才提醒。扫描由 DOM 增删触发，每次扫描都重新计时；
+ *  只改文字不增删节点的（流式输出、「思考 N 秒」计时）扫描看不到，到点时比一下文字，变了也重新计时 */
+function arm(url: string) {
+  clearTimeout(watchTimer);
+  const before = pageText();
+  watchTimer = window.setTimeout(() => {
+    watchTimer = 0;
+    if (location.href !== url || !missing()) return;
+    if (pageText() !== before) return arm(url);
+    warned.add(url);
+    toast = notice(`${SITE_NAME} 改版了，收藏暂时用不了`,
+      `页面上有 ${countQuestions()} 个提问，插件一条回答都没认出来，页面也没在生成或加载。这要改插件代码：复制修复请求，粘贴给 Claude。`,
+      [{ label: '复制修复请求', run: copyRepair }]);
+  }, CHECK_AFTER);
+}
+
+async function copyRepair(): Promise<string> {
+  const { date, time } = beijingTime(new Date());
+  try {
+    await navigator.clipboard.writeText(repairRequest(`${date} ${time}`, browser.runtime.getManifest().version));
+    return '✓ 已复制。到 Claude Code 里 chatgpt-clipper 项目的会话粘贴发送。';
+  } catch {
+    return '没复制成：浏览器没让写剪贴板。点一下页面再试，或刷新页面。';
+  }
+}
+
 function watchChat() {
+  // 插件更新或重新加载后，这页的脚本就断开了，点丝带存不上：提醒刷新（每页一次）
+  if (!browser.runtime?.id) {
+    clearTimeout(watchTimer);
+    if (!stale && inChat()) {
+      stale = true;
+      toast?.remove();
+      toast = notice('插件已更新，刷新这页才能收藏', '这个页面还连着更新前的插件，点丝带会存不上。', [{ label: '刷新页面', run: () => location.reload() }]);
+    }
+    return;
+  }
   if (location.href !== watched) {
     watched = location.href;
     clearTimeout(watchTimer);
@@ -79,14 +119,7 @@ function watchChat() {
     if (findAnswers().length) toast?.remove();
     return;
   }
-  if (watchTimer || warned.has(watched)) return;
-  const url = watched;
-  watchTimer = window.setTimeout(() => {
-    watchTimer = 0;
-    if (location.href !== url || !missing()) return;
-    warned.add(url);
-    toast = notice('收藏按钮没挂上', `这页有对话，但插件没认出回答，${SITE_NAME} 可能改版了。`);
-  }, CHECK_AFTER);
+  if (!warned.has(watched)) arm(watched);
 }
 
 interface Ribbon { el: HTMLElement; state: RibbonState; text: number; set: (s: RibbonState) => void; pick: (n: number) => void }

@@ -19,6 +19,9 @@ const CLAUDE_URL = 'https://claude.ai/chat/fixture';
 const CLAUDE_SLOW_URL = 'https://claude.ai/chat/slow', CLAUDE_THINKING_URL = 'https://claude.ai/chat/thinking';
 // 改版：ChatGPT 测试页（两问两答）的回答标记改掉，插件认不出
 const BROKEN_URL = 'https://chatgpt.com/c/broken';
+// 改版自检的误报场景（2026-11-11）：同样认不出回答，但页面前 14 秒一直在变——一页不停加节点（流式输出），一页只改文字（「思考 N 秒」计时）
+const GROWING_URL = 'https://chatgpt.com/c/growing', TICKING_URL = 'https://chatgpt.com/c/ticking';
+const BROKEN_FIXTURE = FIXTURE.replaceAll(':assistant"', ':assistant-x"');
 // Claude Code 的会话页：同一份回答标记，但不是聊天对话
 const CLAUDE_CODE_URL = 'https://claude.ai/code/session_fixture';
 // 多轮对话，虚拟列表（整段收藏用）
@@ -56,7 +59,11 @@ before(async () => {
     if (url.startsWith(THREAD_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: THREAD_FIXTURE });
     if (url.startsWith(CLAUDE_CODE_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: CLAUDE_FIXTURE });
     // 模拟 Claude 改版：回答换了标记，插件认不出
-    if (url.startsWith(BROKEN_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: FIXTURE.replaceAll(':assistant"', ':assistant-x"') });
+    if (url.startsWith(BROKEN_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: BROKEN_FIXTURE });
+    if (url.startsWith(GROWING_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8',
+      body: BROKEN_FIXTURE.replace('</body>', '<script>{ let n = 0; const t = setInterval(() => { document.body.append(document.createElement(\'p\')); if (++n >= 14) clearInterval(t); }, 1000); }</script></body>') });
+    if (url.startsWith(TICKING_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8',
+      body: BROKEN_FIXTURE.replace('</body>', '<script>{ let n = 0; const p = document.createElement(\'p\'); p.textContent = \'思考 0 秒\'; document.querySelector(\'main\').append(p); const t = p.firstChild; const i = setInterval(() => { t.data = `思考 ${++n} 秒`; if (n >= 14) clearInterval(i); }, 1000); }</script></body>') });
     if (url.startsWith(CLAUDE_SLOW_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8',
       body: CLAUDE_FIXTURE.replace('</body>', '<script>{ const b = document.body, kids = [...b.childNodes]; kids.forEach(k => k.remove()); setTimeout(() => kids.forEach(k => b.appendChild(k)), 12_000); }</script></body>') });
     if (url.startsWith(CLAUDE_THINKING_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8',
@@ -630,8 +637,8 @@ describe('Claude 网页版', () => {
     await pg.close();
   });
 
-  test('改版自检：有两问以上、却连续 10 秒一条回答都没认出来，右下角提醒一次，之后认出回答就自动收起；页面还在加载、第一问还在生成、正常页面都不提醒', async () => {
-    const [broken, slow, thinking] = await Promise.all([BROKEN_URL, CLAUDE_SLOW_URL, CLAUDE_THINKING_URL].map(async u => {
+  test('改版自检：有两问以上、却一条回答都没认出来，页面静止 10 秒才提醒一次，提醒上能复制修复请求，之后认出回答就自动收起；页面还在加载、还在变、第一问还在生成、正常页面都不提醒', async () => {
+    const [broken, slow, thinking, growing, ticking] = await Promise.all([BROKEN_URL, CLAUDE_SLOW_URL, CLAUDE_THINKING_URL, GROWING_URL, TICKING_URL].map(async u => {
       const pg = await ctx.newPage();
       await pg.goto(u);
       return pg;
@@ -640,11 +647,26 @@ describe('Claude 网页版', () => {
     await new Promise(r => setTimeout(r, 12_500));
     const toast = broken.locator('clipper-dock .toast');
     assert.equal(await toast.count(), 1);
-    assert.match(await toast.innerText(), /^!\n收藏按钮没挂上\n这页有对话，但插件没认出回答，ChatGPT 可能改版了。\n✕$/);
+    assert.match(await toast.innerText(), /^!\nChatGPT 改版了，收藏暂时用不了\n页面上有 2 个提问，插件一条回答都没认出来，页面也没在生成或加载。这要改插件代码：复制修复请求，粘贴给 Claude。\n复制修复请求\n✕$/);
     assert.equal(await slow.locator('clipper-dock .toast').count(), 0, '页面还在加载（对话还没出来）不该提醒');
     await slow.locator('clipper-ribbon').first().waitFor({ state: 'attached', timeout: 3_000 });
     assert.equal(await thinking.locator('clipper-dock .toast').count(), 0, '只有一问、回答还没出来（还在生成）不该提醒');
     assert.equal(await cp.locator('clipper-dock .toast').count(), 0, '正常页面不该提醒');
+    assert.equal(await growing.locator('clipper-dock .toast').count(), 0, '页面还在加节点（流式输出）不该提醒');
+    assert.equal(await ticking.locator('clipper-dock .toast').count(), 0, '页面文字还在变（思考计时）不该提醒');
+    // 复制修复请求：选择器命中数和页面结构，不带对话文字
+    await toast.locator('.acts button').click();
+    await toast.getByText('✓ 已复制。到 Claude Code 里 chatgpt-clipper 项目的会话粘贴发送。').waitFor({ timeout: 2_000 });
+    const req = await clipboard(broken);
+    assert.match(req, /^chatgpt-clipper 认不出 ChatGPT 的回答了，请重新侦察对话页（docs\/recon\/），改 src\/lib\/adapter\.ts。\n- 时间：\d{4}-\d\d-\d\d \d\d:\d\d（北京时间）\n- 页面：chatgpt\.com 对话页，插件版本 \d+\.\d+\.\d+\n/, req);
+    assert.match(req, /回答选择器 \[data-chatgpt-search-unit-key\$=":assistant"\]：0 个\n- 提问选择器 \[data-chatgpt-search-unit-key\$=":user"\]：2 个/, req);
+    assert.match(req, /data-chatgpt-search-unit-key ×4/, req);
+    assert.match(req, /界面标记：.*data-chatgpt-search-unit-key="fallback-turn-N:N:assistant-x"/, '改掉的回答标记要写进修复请求');
+    for (const s of ['周度工作节奏', '简短一点', '周一计划', 'fixture', 'broken']) assert.ok(!req.includes(s), `修复请求里不该有对话内容或对话编号：${s}`);
+    // 页面停下来以后照常提醒：最后一次变化在第 14 秒。加节点的页面每次变化都重新计时，约第 24 秒提醒；
+    // 只改文字的页面到点才比文字，第 10、20 秒都和上次不同，第 30 秒才提醒
+    await growing.locator('clipper-dock .toast').waitFor({ timeout: 15_000 });
+    await ticking.locator('clipper-dock .toast').waitFor({ timeout: 12_000 });
     // 回答后来认出来了（这里把标记改回去，再插一个节点让插件重新扫描）：丝带挂上，提醒自动收起
     await broken.evaluate(() => {
       document.querySelectorAll('[data-chatgpt-search-unit-key$=":assistant-x"]').forEach(a => a.dataset.chatgptSearchUnitKey = a.dataset.chatgptSearchUnitKey.replace(/-x$/, ''));
@@ -652,7 +674,7 @@ describe('Claude 网页版', () => {
     });
     await broken.locator('clipper-ribbon').first().waitFor({ state: 'attached', timeout: 3_000 });
     await toast.waitFor({ state: 'detached', timeout: 2_000 });
-    await Promise.all([broken, slow, thinking].map(pg => pg.close()));
+    await Promise.all([broken, slow, thinking, growing, ticking].map(pg => pg.close()));
   });
 });
 
@@ -1091,7 +1113,7 @@ describe('导出 PDF', () => {
 });
 
 // 放在最后：会重新加载插件
-test('插件刷新后没刷新页面：收藏提示「刷新这个页面」，不一直卡在入库', async () => {
+test('插件刷新后没刷新页面：右下角提醒刷新、点了就重新加载页面；收藏提示「刷新这个页面」，不一直卡在入库', async () => {
   await ctx.serviceWorkers()[0].evaluate(() => chrome.runtime.reload()).catch(() => {});
   await new Promise(r => setTimeout(r, 1000));
   // 旧卡片 8 秒后自动关，按个数找新卡片会对不上：先给旧卡片打记号
@@ -1102,4 +1124,11 @@ test('插件刷新后没刷新页面：收藏提示「刷新这个页面」，�
   const text = await done.innerText();
   assert.match(text, /^收藏失败\n[\s\S]*插件刚更新过，刷新这个页面后再收藏$/, text);
   assert.equal(await done.locator('li.on').count(), 0, '不该还有转圈的步骤');
+  // 页面一有变动就提醒刷新；点「刷新页面」页面重新加载、旧提醒没了。
+  // 刷新后连上新插件、丝带重新挂上这一步测不了：Playwright 里 chrome.runtime.reload() 之后插件不会再起来（2026-11-11 实验：服务进程 0 个，新开页面也没有丝带）
+  const toast = page.locator('clipper-dock .toast');
+  await toast.waitFor({ timeout: 2_000 });
+  assert.match(await toast.innerText(), /^!\n插件已更新，刷新这页才能收藏\n这个页面还连着更新前的插件，点丝带会存不上。\n刷新页面\n✕$/);
+  await Promise.all([page.waitForEvent('load', { timeout: 10_000 }), toast.locator('.acts button').click()]);
+  assert.equal(await page.locator('clipper-dock').count(), 0, '刷新后旧插件留下的提醒该没了');
 });
