@@ -49,6 +49,8 @@ before(async () => {
   // 只放行测试页，其余请求一律拦掉，顺带保证快照不依赖网络
   await ctx.route('**/*', route => {
     const url = route.request().url();
+    // 插件自己的页面（导出 PDF 的打印页）照常放行
+    if (url.startsWith('chrome-extension://')) return route.continue();
     if (url.startsWith(URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: FIXTURE });
     if (url.startsWith(CLAUDE_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: CLAUDE_FIXTURE });
     if (url.startsWith(THREAD_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: THREAD_FIXTURE });
@@ -163,7 +165,7 @@ const md = () => result.note;
 test('没选 Vault 文件夹（比如没装 Obsidian）：只把长图下载到 Chrome，最后一步标「无 Obsidian」，给「去设置」', () => {
   assert.match(result.card, /入库\s+无 Obsidian/);
   assert.match(result.card, /^无法保存，长图已下载\n/);
-  assert.match(result.card, /⬇️\s+一、目标与范围\n无 Obsidian，长图已下载到 Chrome\n去设置$/);
+  assert.match(result.card, /⬇️\s+一、目标与范围\n无 Obsidian，长图已下载到 Chrome\n去设置\n📄 导出 PDF\n默认存储地址为「下载」$/, '没有 Obsidian 也能导出 PDF');
   assert.doesNotMatch(result.card, /不完整/);
   assert.equal(result.items.length, 1);
   assert.equal(png().subarray(1, 4).toString(), 'PNG');
@@ -191,7 +193,7 @@ test('选了文件夹就写进去；同一条再收藏就覆盖；刷新后丝�
   assert.equal(t[names[0]]['一、目标与范围.md'], Buffer.byteLength(md()));
   assert.match(first, /^已收藏\n/);
   assert.match(first, /入库\s+已存入/);
-  assert.match(first, /📁\s+一、目标与范围\n\d{4}-\d{2}-\d{2}$/);
+  assert.match(first, /📁\s+一、目标与范围\n\d{4}-\d{2}-\d{2}\n📄 导出 PDF\n默认存储地址为「下载」$/);
 
   const again = await collect();
   assert.match(again, /^已更新\n/);
@@ -488,51 +490,27 @@ describe('Claude 网页版', () => {
     await cp.locator(`${MSG} clipper-ribbon button.rib.done`).waitFor({ timeout: 5_000 });
   });
 
-  test('收藏后补一句「为什么存」：写进笔记，按键不传给页面；再收藏沿用（Obsidian 里手改过的也认）；改成空就去掉', async () => {
+  test('「为什么存」已删（FR-8，2026-11-10）：卡片上没有输入框；旧笔记里写过的 why，再收藏同一条时不再保留', async () => {
     const sw = ctx.serviceWorkers()[0];
     const note = () => sw.evaluate(async () => {
       for await (const [, h] of (await navigator.storage.getDirectory()).entries())
         for await (const [f, fh] of h.entries()) if (f.endsWith('.md')) return (await fh.getFile()).text();
     });
     const collect = () => collectCard(cp, `${MSG} clipper-ribbon button`);
-    const write = async (card, text) => {
-      await card.locator('.why input').fill(text);
-      await card.locator('.why input').press('Enter');
-    };
-    await cp.evaluate(() => { window.__keys = 0; document.addEventListener('keydown', () => window.__keys++); });
-
     let card = await collect();
-    assert.equal(await card.locator('.why input').getAttribute('placeholder'), '为什么存？写一句（可不填）');
-    await card.locator('.why input').click();
-    await cp.keyboard.type('abc');
-    await card.locator('.why input').press('Escape');
-    assert.equal(await cp.evaluate(() => window.__keys), 0, '输入框里的按键不该传到页面');
-    await write(card, '  下周写方案   用 ');
-    await card.locator('.said').waitFor();
-    assert.match(await card.locator('.said').innerText(), /^下周写方案 用\s*改$/);
-    let n = await note();
-    assert.match(n, /\ntitle: "快速排序示例"\nwhy: "下周写方案 用"\n/);
-    assert.match(n, /\n---\n\n> \[!note\] 为什么存\n> 下周写方案 用\n\n\[↩ 打开原回答\]\(.+\)\n\n> \[!question\]- 提问\n/);
-    assert.ok(n.includes('![[answer.png]]'), '补写不该动长图的嵌入');
-
-    // 在 Obsidian 里手改成不带引号的，再收藏：沿用手改的那句，卡片直接显示
+    assert.equal(await card.locator('input, .why, .said').count(), 0, '卡片上不该再有「为什么存」');
+    // 模拟删功能之前写过一句的旧笔记
     await sw.evaluate(async () => {
       for await (const [, h] of (await navigator.storage.getDirectory()).entries())
         for await (const [f, fh] of h.entries()) if (f.endsWith('.md')) {
-          const t = (await (await fh.getFile()).text()).replace(/^why: .*$/m, 'why: 手改过');
+          const t = (await (await fh.getFile()).text()).replace(/^(title: .*)$/m, '$1\nwhy: "旧的一句"').replace(/\n---\n/, '\n---\n\n> [!note] 为什么存\n> 旧的一句\n');
           const w = await fh.createWritable(); await w.write(t); await w.close();
         }
     });
+    assert.match(await note(), /why: "旧的一句"/);
     card = await collect();
-    assert.match(await card.locator('.said').innerText(), /^手改过/);
-    n = await note();
-    assert.match(n, /\nwhy: "手改过"\n/);
-    assert.equal(n.match(/\[!note\] 为什么存/g).length, 1);
-    assert.match(n, /> \[!note\] 为什么存\n> 手改过\n/);
-
-    await card.locator('.said button').click();
-    await write(card, '');
-    for (let i = 0; i < 25 && /why:/.test(n = await note()); i++) await new Promise(r => setTimeout(r, 200));
+    assert.equal(await card.locator('input, .why, .said').count(), 0);
+    const n = await note();
     assert.doesNotMatch(n, /why:|为什么存/);
     assert.match(n, /\n---\n\n\[↩ 打开原回答\]\(.+\)\n\n> \[!question\]- 提问\n/);
   });
@@ -562,7 +540,6 @@ describe('Claude 网页版', () => {
     assert.match(text, /^已收藏，但可能不完整\n/, text);
     assert.equal(await card.locator('li.warn').innerText(), '!\nMD 文件\n' + text.match(/(\d+ 字)/)[1]);
     assert.match(await card.locator('.loc.warn').innerText(), /^⚠️\s+笔记只读到页面文字的 \d+%\n页面可能改版了，能存的部分已存好$/);
-    assert.ok(await card.locator('.why input, .said').count(), '标黄时也能写一句');
     let n = (await notes()).find(t => t.includes('incomplete'));
     assert.match(n, /\ntags: \[claude收藏\]\nincomplete: true\n---\n\n> \[!warning\] 可能不完整\n> 笔记只读到页面文字的 \d+%，页面可能改版了。\n\n\[↩ 打开原回答\]\(.+\)\n\n> \[!question\]- 提问\n/);
 
@@ -946,6 +923,170 @@ describe('整段收藏（拉长书签）', () => {
     assert.equal(await clipboard(page), '整段收藏前的剪贴板');
     const all = await threads(), name = Object.keys(all).find(d => !d.includes('第 1 问'));
     assert.deepEqual(Object.keys(all[name]).filter(f => f.endsWith('.png')).sort(), ['answer-01.png', 'answer-02.png']);
+  });
+});
+
+// 导出 PDF（FR-15）：收藏完点卡片上的「导出 PDF」，后台用 debugger 打印成 A4 存进「下载」。
+// 核对 PDF 用本机的 poppler（pdfinfo、pdftotext；brew install poppler），不是 npm 依赖
+describe('导出 PDF', () => {
+  const MSG = '[data-testid="assistant-message"]';
+  let sw;
+  const poppler = (tool, file) => execFileSync(tool, [file, ...(tool === 'pdftotext' ? ['-'] : [])], { encoding: 'utf8' });
+  // 点「导出 PDF」，等这一行变成「已存到」或「没导出成」；返回这一行的字、PDF 文件路径、插件给的文件名
+  const exportFrom = async card => {
+    const before = await sw.evaluate(() => self.__pdfNames.length);
+    await card.locator('.pdf .pb').click();
+    await card.locator('.pdf .ok, .pdf .bad').waitFor({ timeout: 30_000 });
+    const row = await card.locator('.pdf').innerText();
+    if (!(await card.locator('.pdf .ok').count())) return { row };
+    let item;
+    for (let i = 0; i < 50; i++) {
+      [item] = await sw.evaluate(() => chrome.downloads.search({ orderBy: ['-startTime'], limit: 1 }));
+      if (item?.state === 'complete') break;
+      await new Promise(r => setTimeout(r, 200));
+    }
+    const names = await sw.evaluate(() => self.__pdfNames);
+    assert.equal(names.length, before + 1, '该多下载一个 PDF');
+    const info = poppler('pdfinfo', item.filename);
+    return { row, file: item.filename, name: names.at(-1), text: poppler('pdftotext', item.filename),
+      pages: Number(info.match(/^Pages:\s+(\d+)/m)[1]), size: info.match(/^Page size:\s+(.+)$/m)[1] };
+  };
+  // 同一页上互相压住的字（分页把一块挪到下一页、外层没跟着变高时，后面的内容会叠上来）：横向重叠超过窄的那个字一半、
+  // 纵向中心相差不到矮的那个字一半才算（中文字的框比行高还高，上下两行的框本来就会擦到一点）
+  const overlaps = file => {
+    const out = [], xml = execFileSync('pdftotext', ['-bbox', file, '-'], { encoding: 'utf8' });
+    for (const [i, pg] of xml.split('<page ').slice(1).entries()) {
+      const w = [...pg.matchAll(/<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">([^<]*)</g)].map(m => [...m.slice(1, 5).map(Number), m[5]]);
+      for (let a = 0; a < w.length; a++) for (let b = a + 1; b < w.length; b++) {
+        const [ax0, ay0, ax1, ay1] = w[a], [bx0, by0, bx1, by1] = w[b];
+        const ix = Math.min(ax1, bx1) - Math.max(ax0, bx0), dy = Math.abs((ay0 + ay1) - (by0 + by1)) / 2;
+        if (ix > 0.5 * Math.min(ax1 - ax0, bx1 - bx0) && dy < 0.5 * Math.min(ay1 - ay0, by1 - by0)) out.push(`第 ${i + 1} 页「${w[a][4]}」和「${w[b][4]}」`);
+      }
+    }
+    return out;
+  };
+  const pull = async (pg, rib, dy) => {
+    const b = await rib.boundingBox(), x = b.x + b.width / 2, y = b.y + 10;
+    await pg.mouse.move(x, y);
+    await pg.mouse.down();
+    await pg.mouse.move(x, y + dy, { steps: 10 });
+    await pg.mouse.up();
+  };
+
+  before(async () => {
+    sw = ctx.serviceWorkers()[0];
+    await setVault(sw);
+    // 记下插件给 PDF 起的名字（Playwright 会把下载文件改成随机名）
+    await sw.evaluate(() => {
+      self.__pdfNames = [];
+      const download = chrome.downloads.download.bind(chrome.downloads);
+      chrome.downloads.download = (opts, ...rest) => {
+        if (opts.filename?.endsWith('.pdf')) self.__pdfNames.push(opts.filename);
+        return download(opts, ...rest);
+      };
+    });
+  });
+
+  test('ChatGPT 整条收藏：卡片底部「导出 PDF」+「默认存储地址为「下载」」；点了存成 A4 PDF，有标题、来源、提问和回答文字，表格不跨页，不附长图和属性区', async () => {
+    await page.bringToFront();
+    const card = await collectCard(page, `${ANSWER} clipper-ribbon button`);
+    assert.equal(await card.locator('.pdf .pb').innerText(), '📄 导出 PDF');
+    assert.equal(await card.locator('.pdf .n').innerText(), '默认存储地址为「下载」');
+    const tabs = ctx.pages().length;
+    const r = await exportFrom(card);
+    assert.match(r.row, /^📄 已存到「下载」· (\d+) 页\s*在访达中显示$/, r.row);
+    assert.equal(Number(r.row.match(/(\d+) 页/)[1]), r.pages, '卡片上的页数该和 PDF 一致');
+    assert.ok(r.pages >= 2, `长回答该分成多页，实际 ${r.pages} 页`);
+    assert.match(r.size, /^595\.\d+ x 841\.\d+ pts \(A4\)$/);
+    assert.match(r.name, /^\d{4}-\d{2}-\d{2} 一、目标与范围\.pdf$/, '存进「下载」根目录，文件名同收藏文件夹');
+    assert.equal(ctx.pages().length, tabs, '打印用的标签页该关掉');
+    for (const s of ['一、目标与范围', 'ChatGPT · ', '（北京时间）', 'https://chatgpt.com/c/fixture#clip-', '提问', '帮我设计一个小团队的周度工作节奏', '四、工具与约定', '负责人 丙'])
+      assert.ok(r.text.includes(s), `PDF 里该有「${s}」`);
+    for (const s of ['tags:', 'answer.png', '打开原回答', 'captured'])
+      assert.ok(!r.text.includes(s), `PDF 里不该有「${s}」`);
+    // 每张表 5 行：哪一页有「事项 1」就该有同样多的「事项 5」，否则有表被切开了
+    assert.deepEqual(overlaps(r.file).slice(0, 5), [], '不该有字叠在一起');
+    // 卡片（「要点 x.y」+ 一句「第 n 条说明」）同理：标题和说明该在同一页
+    for (const [i, p] of r.text.split('\f').entries()) {
+      assert.equal(p.split('事项 1').length, p.split('事项 5').length, `第 ${i + 1} 页有表格被切开了`);
+      assert.equal(p.split(/要点 \d+\.\d/).length, p.split(/条说明/).length, `第 ${i + 1} 页有卡片被切开了`);
+    }
+  });
+
+  test('Claude 节选：PDF 只有选中的几块，标题带「（节选）」', async () => {
+    const cp = await ctx.newPage();
+    await cp.goto(CLAUDE_URL);
+    await cp.locator(`${MSG} clipper-ribbon`).waitFor({ state: 'attached' });
+    await cp.evaluate(() => {
+      const root = document.querySelector('[data-testid="assistant-message"] .standard-markdown'), r = document.createRange();
+      r.setStart(root.querySelector('h2').firstChild, 1);
+      r.setEnd(root.querySelector('p strong').firstChild, 1);
+      getSelection().removeAllRanges();
+      getSelection().addRange(r);
+    });
+    await cp.locator(`${MSG} clipper-ribbon button.rib.pick`).waitFor({ timeout: 2_000 });
+    const r = await exportFrom(await collectCard(cp, `${MSG} clipper-ribbon button`));
+    assert.match(r.name, /^\d{4}-\d{2}-\d{2} 快速排序示例（节选）\.pdf$/);
+    for (const s of ['快速排序示例（节选）', 'Claude · ', '用 Python 写一个快速排序，再给一张表和公式。', '带注释'])
+      assert.ok(r.text.includes(s), `PDF 里该有「${s}」`);
+    for (const s of ['quick_sort(a)', '两个不等实根', '先分区再递归'])
+      assert.ok(!r.text.includes(s), `节选 PDF 里不该有「${s}」`);
+    await cp.close();
+  });
+
+  test('整段收藏：PDF 每一轮一节，6 问 6 答都在，标题带「（整段）」', async () => {
+    const tp = await ctx.newPage();
+    await tp.goto(THREAD_URL);
+    await tp.locator(`${MSG} clipper-ribbon`).first().waitFor({ state: 'attached' });
+    await tp.locator('clipper-dock .card').evaluateAll(cs => cs.forEach(c => c.setAttribute('data-old', '')));
+    await pull(tp, tp.locator(`${MSG} clipper-ribbon button`).last(), 150);
+    const card = tp.locator('clipper-dock .card.ok:not([data-old])').first();
+    await card.waitFor({ timeout: 60_000 });
+    const r = await exportFrom(card);
+    assert.match(r.name, /^\d{4}-\d{2}-\d{2} 第 1 问.*（整段）\.pdf$/, r.name);
+    assert.ok(r.text.includes('（整段）'));
+    for (let k = 1; k <= 6; k++) {
+      assert.ok(r.text.includes(`${k}. 第 ${k} 问`), `该有第 ${k} 轮的小标题`);
+      assert.ok(r.text.includes(`第 ${k} 个主题`), `该有第 ${k} 问的提问`);
+    }
+    await tp.close();
+  });
+
+  test('导出失败：写「没导出成」和中文原因（Chrome 的英文报错翻成怎么办）、点「重试」再导；打印用的标签页都关掉', async () => {
+    await page.bringToFront();
+    const card = await collectCard(page, `${ANSWER} clipper-ribbon button`), tabs = ctx.pages().length;
+    // 只让下一次接 debugger 失败
+    await sw.evaluate(() => {
+      const attach = chrome.debugger.attach.bind(chrome.debugger);
+      chrome.debugger.attach = async () => { chrome.debugger.attach = attach; throw new Error('Another debugger is already attached to the tab with id: 1.'); };
+    });
+    const bad = await exportFrom(card);
+    assert.match(bad.row, /^没导出成：第 2 步「接上调试」：打印页正被别的调试工具占用，关掉后点「重试」\s*重试$/, bad.row);
+    assert.equal(ctx.pages().length, tabs, '失败了打印用的标签页也该关掉');
+    await card.locator('.pdf .lk').click();
+    await card.locator('.pdf .ok').waitFor({ timeout: 30_000 });
+    assert.match(await card.locator('.pdf').innerText(), /^📄 已存到「下载」· \d+ 页/);
+  });
+
+  test('某一步一直不完成（真实 Chrome 里卡在「正在导出」过）：到时停下，写清卡在第几步，标签页关掉，能重试', async () => {
+    await page.bringToFront();
+    const card = await collectCard(page, `${ANSWER} clipper-ribbon button`), tabs = ctx.pages().length;
+    // 打印这一步永远不回；限时改成 1.5 秒
+    await sw.evaluate(() => {
+      self.__pdfLimits = { print: 1500 };
+      const send = chrome.debugger.sendCommand.bind(chrome.debugger);
+      chrome.debugger.sendCommand = (t, method, ...rest) => {
+        if (method !== 'Page.printToPDF') return send(t, method, ...rest);
+        chrome.debugger.sendCommand = send;
+        return new Promise(() => {});
+      };
+    });
+    const bad = await exportFrom(card);
+    assert.match(bad.row, /^没导出成：第 3 步「打印」超过 1\.5 秒没完成，点「重试」再导一次\s*重试$/, bad.row);
+    assert.equal(ctx.pages().length, tabs, '超时了打印用的标签页也该关掉');
+    await sw.evaluate(() => { delete self.__pdfLimits; });
+    await card.locator('.pdf .lk').click();
+    await card.locator('.pdf .ok').waitFor({ timeout: 30_000 });
   });
 });
 
