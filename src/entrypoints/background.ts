@@ -1,5 +1,5 @@
 import { DOWNLOAD_ROOT, PAGES, PART_CHARS, type PrintPart, type Request, type Response } from '@/lib/messages';
-import { dirState, finishThread, getSaved, loadDir, loadWhere, obsidianUrl, saveCollection, threadFolder, writeFiles } from '@/lib/vault';
+import { dirState, finishThread, getSaved, loadDir, loadWhere, obsidianUrl, saveCollection, threadFolder, writeThreadFile } from '@/lib/vault';
 
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener((msg: Request, _sender, reply: (r: Response) => void) => {
@@ -29,14 +29,14 @@ async function handle(msg: Request): Promise<Response> {
     if (state !== 'granted') return { ok: false, code: 'no-permission', error: `文件夹「${dir.name}」的授权已失效` };
     if (msg.type === 'thread-begin') {
       const r = await threadFolder(dir, msg.id, msg.folder);
-      return { ok: true, folder: r.name, path: `${dir.name}/${r.name}`, updated: r.updated, moved: r.moved };
+      return { ok: true, folder: r.name, job: r.job, path: `${dir.name}/${r.name}`, updated: r.updated, moved: r.moved };
     }
     if (msg.type === 'thread-file') {
-      await writeFiles(dir, msg.folder, [{ name: msg.file.name, data: await (await fetch(msg.file.url)).blob() }]);
+      await writeThreadFile(dir, msg.job, { name: msg.file.name, data: await (await fetch(msg.file.url)).blob() });
       return { ok: true };
     }
     if (msg.type === 'thread-end') {
-      await finishThread(dir, msg.id, msg.folder, { name: msg.note.name, data: await (await fetch(msg.note.url)).blob() }, msg.images);
+      await finishThread(dir, msg.id, msg.folder, { name: msg.note.name, data: await (await fetch(msg.note.url)).blob() }, msg.images, msg.job);
       const where = await loadWhere();
       return { ok: true, path: `${dir.name}/${msg.folder}`, open: where ? obsidianUrl(where, msg.folder, msg.note.name) : '' };
     }

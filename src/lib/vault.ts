@@ -24,9 +24,12 @@ function idb<T>(mode: IDBTransactionMode, run: (s: IDBObjectStore) => IDBRequest
     open.onupgradeneeded = () => open.result.createObjectStore(STORE);
     open.onerror = () => reject(open.error);
     open.onsuccess = () => {
-      const db = open.result, req = run(db.transaction(STORE, mode).objectStore(STORE));
-      req.onsuccess = () => { db.close(); resolve(req.result as T); };
-      req.onerror = () => { db.close(); reject(req.error); };
+      const db = open.result, tx = db.transaction(STORE, mode);
+      let req: IDBRequest;
+      tx.oncomplete = () => { db.close(); resolve(req.result as T); };
+      tx.onabort = tx.onerror = () => { db.close(); reject(tx.error ?? new Error('收藏索引没有提交')); };
+      try { req = run(tx.objectStore(STORE)); }
+      catch (e) { tx.abort(); db.close(); reject(e); }
     };
   });
 }
@@ -60,44 +63,153 @@ export const getSaved = async (id: string): Promise<Saved | undefined> => {
   const v = await idb<string | Saved | undefined>('readonly', s => s.get(SAVED + id));
   return typeof v === 'string' ? { folder: v } : v;
 };
-const setSaved = (id: string, v: Saved) => idb('readwrite', s => s.put(v, SAVED + id));
+
+// 所有标签页共用后台的队列，保护「查目录 → 分配名字 → 写入 → 记索引」；失败不堵住下一次收藏。
+let writing: Promise<unknown> = Promise.resolve();
+function serial<T>(run: () => Promise<T>): Promise<T> {
+  const next = writing.then(async () => { await recover(); return run(); });
+  writing = next.catch(() => undefined);
+  return next;
+}
+
+// File System Access 不能原子替换整组文件。先持久保存改前副本，再写文件，最后在同一个 IDB 事务里
+// 提交索引和完成标记。后台被终止或恢复失败时保留日志，下一次写入前先恢复；不把半组文件当成功。
+const PENDING = 'pending-write';
+interface Pending {
+  dir: FileSystemDirectoryHandle;
+  name: string;
+  existed: boolean;
+  before: { name: string; data?: Blob }[];
+  oldFolder?: string;
+  committed?: boolean;
+}
+
+async function recover() {
+  const p = await idb<Pending | undefined>('readonly', s => s.get(PENDING));
+  if (!p) return;
+  if (p.committed) {
+    if (p.oldFolder && await hasFolder(p.dir, p.oldFolder)) await p.dir.removeEntry(p.oldFolder, { recursive: true });
+  } else if (!p.existed) {
+    if (await hasFolder(p.dir, p.name)) await p.dir.removeEntry(p.name, { recursive: true });
+  } else {
+    const sub = await p.dir.getDirectoryHandle(p.name);
+    for (const f of p.before) {
+      if (f.data) await writeFiles(p.dir, p.name, [{ name: f.name, data: f.data }]);
+      else await removeFile(sub, f.name);
+    }
+  }
+  await idb('readwrite', s => s.delete(PENDING));
+}
+
+async function removeFile(sub: FileSystemDirectoryHandle, name: string) {
+  try { await sub.removeEntry(name); }
+  catch (e) { if ((e as DOMException).name !== 'NotFoundError') throw e; }
+}
+
+async function commit(dir: FileSystemDirectoryHandle, id: string, name: string, files: VaultFile[], stale: string[] = [], oldFolder?: string) {
+  const existed = await hasFolder(dir, name), before: Pending['before'] = [];
+  const sub = existed ? await dir.getDirectoryHandle(name) : undefined;
+  for (const f of new Set([...files.map(f => f.name), ...stale])) {
+    let data: Blob | undefined;
+    if (sub) {
+      try {
+        const file = await (await sub.getFileHandle(f)).getFile();
+        // getFile() 是磁盘快照，原文件改变后可能失效；先独立复制字节，再开始覆盖。
+        data = new Blob([await file.arrayBuffer()], { type: file.type });
+      } catch (e) { if ((e as DOMException).name !== 'NotFoundError') throw e; }
+    }
+    before.push({ name: f, data });
+  }
+  const p: Pending = { dir, name, existed, before, oldFolder };
+  await idb('readwrite', s => s.put(p, PENDING));
+  try {
+    await writeFiles(dir, name, files);
+    const target = await dir.getDirectoryHandle(name);
+    for (const f of stale) await removeFile(target, f);
+    await idb('readwrite', s => {
+      s.put({ folder: name, note: files.find(f => f.name.endsWith('.md'))?.name }, SAVED + id);
+      return s.put({ ...p, committed: true }, PENDING);
+    });
+  } catch (e) {
+    try { await recover(); }
+    catch (recovery) { throw new Error(`写入失败，旧收藏尚未恢复；下次保存前会重试恢复：${String(recovery)}`, { cause: e }); }
+    throw e;
+  }
+  // 索引已提交，新收藏完整可用；旧目录清理失败则保留日志，下次写入前再清理。
+  await recover().catch(() => undefined);
+}
 
 /** 写一条收藏（FR-5）。新回答：新建文件夹，重名加序号。同一条回答：覆盖原文件夹；文件夹名里的标题和现在应有的不一样
  *  （命名规则调整、标题变了），且里面只有插件写的长图和一篇笔记，就改成新名字（日期沿用第一次收藏的）；原文件夹被整理走了就不写 */
-export async function saveCollection(dir: FileSystemDirectoryHandle, id: string, folder: string, files: VaultFile[]):
+export function saveCollection(dir: FileSystemDirectoryHandle, id: string, folder: string, files: VaultFile[]) {
+  return serial(() => saveOne(dir, id, folder, files));
+}
+
+async function saveOne(dir: FileSystemDirectoryHandle, id: string, folder: string, files: VaultFile[]):
   Promise<{ name: string; updated?: boolean; moved?: boolean }> {
   const prev = await getSaved(id), md = files.find(f => f.name.endsWith('.md')), note = md?.name;
   if (prev && !(await hasFolder(dir, prev.folder))) return { name: prev.folder, moved: true };
   let name = prev?.folder ?? await newFolder(dir, folder);
   if (prev && titlePart(prev.folder) !== titlePart(folder) && await onlyOurs(await dir.getDirectoryHandle(prev.folder), prev.note))
     name = await newFolder(dir, `${prev.folder.match(DATE)?.[0] ?? ''} ${titlePart(folder)}`.trim());
-  await writeFiles(dir, name, files);
-  if (prev && name !== prev.folder) await dir.removeEntry(prev.folder, { recursive: true });
-  else if (prev?.note && note && prev.note !== note) await (await dir.getDirectoryHandle(name)).removeEntry(prev.note).catch(() => undefined);
-  await setSaved(id, { folder: name, note });
+  const stale = prev?.note && note && prev.note !== note && name === prev.folder ? [prev.note] : [];
+  await commit(dir, id, name, files, stale, prev && name !== prev.folder ? prev.folder : undefined);
   return { name, updated: !!prev };
 }
 
 /** 整段收藏（FR-13）开头：定下写到哪个文件夹并建好。id 是对话地址：收藏过且原文件夹还在就沿用（覆盖）；
  *  原文件夹被整理走了返回 moved、不写；没收藏过就新建，重名加序号 */
-export async function threadFolder(dir: FileSystemDirectoryHandle, id: string, folder: string):
-  Promise<{ name: string; updated?: boolean; moved?: boolean }> {
-  const prev = await getSaved(id);
-  if (prev) return (await hasFolder(dir, prev.folder)) ? { name: prev.folder, updated: true } : { name: prev.folder, moved: true };
-  const name = await newFolder(dir, folder);
-  await dir.getDirectoryHandle(name, { create: true });
-  return { name };
+const THREAD_JOB = 'thread-job:', THREAD_FOLDER = 'thread-folder:';
+interface ThreadJob { dir: FileSystemDirectoryHandle; id: string; name: string; files: VaultFile[] }
+export function threadFolder(dir: FileSystemDirectoryHandle, id: string, folder: string) {
+  return serial(async (): Promise<{ name: string; job?: string; updated?: boolean; moved?: boolean }> => {
+    const prev = await getSaved(id);
+    if (prev && !(await hasFolder(dir, prev.folder))) return { name: prev.folder, moved: true };
+    const reserved = await idb<{ dir: FileSystemDirectoryHandle; name: string } | undefined>('readonly', s => s.get(THREAD_FOLDER + id));
+    const reuse = reserved && await dir.isSameEntry(reserved.dir) && await hasFolder(dir, reserved.name);
+    const name = prev?.folder ?? (reuse ? reserved.name : await newFolder(dir, folder));
+    await dir.getDirectoryHandle(name, { create: true });
+    const job = crypto.randomUUID();
+    await idb('readwrite', s => {
+      s.put({ dir, name }, THREAD_FOLDER + id);
+      return s.put({ dir, id, name, files: [] } satisfies ThreadJob, THREAD_JOB + job);
+    });
+    return { name, job, updated: !!prev };
+  });
 }
 
-/** 整段收藏结尾（长图已逐张写好）：写笔记；删掉上次留下、这次没有的长图（answer-NN.png）和改了名的旧笔记；记下收藏 */
-export async function finishThread(dir: FileSystemDirectoryHandle, id: string, name: string, note: VaultFile, images: string[]) {
-  const prev = await getSaved(id);
-  await writeFiles(dir, name, [note]);
-  const sub = await dir.getDirectoryHandle(name), stale: string[] = [];
-  for await (const [f, h] of sub.entries())
-    if (h.kind === 'file' && ((THREAD_IMAGE.test(f) && !images.includes(f)) || (f === prev?.note && f !== note.name))) stale.push(f);
-  for (const f of stale) await sub.removeEntry(f);
-  await setSaved(id, { folder: name, note: note.name });
+/** 分批消息只写本次任务的本机暂存；结束前不覆盖 Vault 里的旧图。 */
+export function writeThreadFile(dir: FileSystemDirectoryHandle, job: string, file: VaultFile) {
+  return serial(async () => {
+    const staged = await idb<ThreadJob | undefined>('readonly', s => s.get(THREAD_JOB + job));
+    if (!staged || !(await dir.isSameEntry(staged.dir))) throw new Error('整段收藏任务已失效，请重新收藏');
+    staged.files = [...staged.files.filter(f => f.name !== file.name), file];
+    await idb('readwrite', s => s.put(staged, THREAD_JOB + job));
+  });
+}
+
+/** 整段收藏结尾：核对本次清单，再整组提交笔记、图片和旧图清理；失败恢复旧版本。 */
+export function finishThread(dir: FileSystemDirectoryHandle, id: string, name: string, note: VaultFile, images: string[], job: string) {
+  return serial(async () => {
+    const staged = await idb<ThreadJob | undefined>('readonly', s => s.get(THREAD_JOB + job));
+    if (!staged || staged.id !== id || staged.name !== name || !(await dir.isSameEntry(staged.dir)))
+      throw new Error('整段收藏任务已失效，请重新收藏');
+    if (images.length !== staged.files.length || new Set(images).size !== images.length || images.some(f => !staged.files.some(s => s.name === f)))
+      throw new Error('整段收藏的长图没有收齐，请重新收藏');
+    const prev = await getSaved(id);
+    if (!(await hasFolder(dir, name))) throw new Error('原收藏文件夹已被整理走，这次没有重写');
+    const sub = await dir.getDirectoryHandle(name), stale: string[] = [];
+    for await (const [f, h] of sub.entries())
+      if (h.kind === 'file' && ((THREAD_IMAGE.test(f) && !images.includes(f)) || (f === prev?.note && f !== note.name))) stale.push(f);
+    try {
+      await commit(dir, id, name, [note, ...staged.files], stale);
+    } finally {
+      await idb('readwrite', s => {
+        s.delete(THREAD_FOLDER + id);
+        return s.delete(THREAD_JOB + job);
+      }).catch(() => undefined);
+    }
+  });
 }
 
 /** 整段收藏的长图：answer-01.png、answer-02.png…… */
@@ -138,8 +250,13 @@ export async function writeFiles(dir: FileSystemDirectoryHandle, name: string, f
   const sub = await dir.getDirectoryHandle(name, { create: true });
   for (const f of files) {
     const w = await (await sub.getFileHandle(f.name, { create: true })).createWritable();
-    await w.write(f.data);
-    await w.close();
+    try {
+      await w.write(f.data);
+      await w.close();
+    } catch (e) {
+      await w.abort().catch(() => undefined);
+      throw e;
+    }
   }
 }
 

@@ -2,30 +2,25 @@
 
 当前阶段目标：一键导出 PDF 给 AI（FR-15），分三批：① 删「为什么存」② 导出 PDF ③ 常浩真实 Chrome 验收。（2026-11-10 常浩确认）已完成，2026-11-11 合并（#5）。
 
-更新：2026-11-19。FR-9 改成「插件更新后给已开页面补装脚本」（#12，常浩选「只补装」、同意加 scripting 和两个站的 host 权限），PR 待合并。下一步：常浩合并后，在真实 Chrome 里重新加载插件、不刷新已开的 ChatGPT 页面点丝带收藏一次。之前的生成图片修复（#9）、FR-15、FR-9 C 版已合并。
+更新：2026-11-12。本 worktree 的审计高危修复：第 1 项已修；第 2 项已补整组提交与恢复，但不完整更新如何处理待常浩确认，仍有旧长图丢失风险。全量测试已执行，浏览器启动受阻，不能称全部通过。未提交、未推送、未采用到真实插件。唯一下一步：确认不完整更新的异常保存行为。
 
+## 审计高危修复：并发目录保护、整组提交与恢复（2026-11-12，Codex，用户授权只修审计第 1、2 项，行为变化另行确认；未提交、未发布）
 
-## 插件更新后给已开页面补装脚本，不用刷新（FR-9「只补装」）（2026-11-19，Claude，常浩选「换个改法（只补装）」，又同意加 chatgpt.com、claude.ai 两个站的 host 权限；已提交、PR 待合并，未发布）
+- 时间：开工 `2026-11-12 10:55`（本轮 `date '+%F %H:%M'` 记录）。来由：独立审计确认并发覆盖与更新丢失旧长图两项高危。
+- 改了哪些文件：`src/lib/vault.ts`（统一保存队列、持久恢复副本、文件组与索引提交、失败中止 writable、整段按任务暂存；IDB 等事务完成是整组提交的必要前提）；`src/lib/messages.ts`、`src/entrypoints/background.ts`、`src/entrypoints/content.ts`（仅接入整段暂存任务标识）；`tests/vault-save.test.mjs`（17 个隔离存储回归）；`CURRENT.md`（本节交接与主线）。无无关重构、无新增依赖。总结另写到授权证据目录。
+- 测试：新增回归 `node --test tests/vault-save.test.mjs` 原样结果 `ℹ pass 17` / `ℹ fail 0`。最终全量 `node --test tests/*.test.mjs` 原样结果 `ℹ pass 26` / `ℹ fail 15` / `ℹ cancelled 26`（67 tests，退出码 1；Chromium 启动 SIGABRT，调用链出现 kill EPERM；不能算通过）。`npm run compile`、`npm run build` 退出码 0；`node scripts/check-rules.mjs` 原样输出 `通用规则检查通过`。完整原样输出见证据目录 `full-tests-final.log`，首次全量也保留在 `full-tests.log`。
+- 验证：只用内存 File System Access / IndexedDB 和合成内容；保留修前失败日志 `item1-red.log`、`item2-red.log`、`item2-thread-red.log` 及对应修后日志。证据位于 `/Users/nat/Library/Application Support/chatgpt-clipper/evidence/2026-11-12-codex-fix/`。所有源文件和构建产物仅在本 worktree；未访问网络，未碰真实 Vault、data/、钥匙串或私人日志。
+- 截图：无（无界面设计改动；浏览器未启动，无法验证真实交互）。
+- 发布与回读：未发布、未提交、未推送；真实插件未重新加载，真实 Chrome / 磁盘故障 / worker 终止未验证。恢复逻辑已用持久日志加重新加载模块验证，不能替代真实浏览器故障验证。
+- 与授权不一致之处、遗留问题、范围外发现：① 第 2 项仅部分修复。现有流程允许只生成 Markdown 后更新；若换目录，仍会删旧 PNG；若原地更新，仍可能新 MD 配旧 PNG。为不擅改既有部分保存行为，此分支未改。合成回读见 `partial-update-pending.log`。推荐确认「本次不完整更新报错、沿现有下载兜底，旧收藏和索引全部保留」，代价是本次部分结果不覆盖到 Vault；备选另存不完整副本。② File System Access 无跨文件原子事务；文件写入期间可能被外部读到中间状态，中断后在下一次写入前恢复，恢复持续失败时保留日志并阻断后续写入。③ 备份和整段暂存占用本机 IndexedDB；已验证持久化失败不覆盖旧收藏。未走到结束消息的整段暂存可能保留在本机 IndexedDB，尚未加过期清理。④ 旧目录清理失败时新组已提交，保留日志下次清理，可能暂留两份目录。⑤ 其他审计项未扩展处理；IDB 事务等待仅因第 2 项提交正确性直接依赖而修改。
+- 本轮新坑：无（审计既有问题，未新增 LESSONS 条目）。
 
-- 时间：开工 `2026-11-19 16:07`。★ 来由：积压清单组 7（全局 G-35），碰到 FR-9 已定内容，按第 15 节问过（#12）：常浩选「只补装，补装失败仍提醒刷新，第一次升级的两条丝带接受」。
-- 改了哪些文件：`src/entrypoints/background.ts`（`runtime.onInstalled` 安装、更新时按 `PAGES` 查已开标签页，`scripting.executeScript` 补装 `content-scripts/content.js`，失败的只记日志）；`src/entrypoints/content.ts`（`main(ctx)`：新的一份启动时 WXT 让旧的作废，旧的断开监听、清计时、收起自己的 `[data-clipper-ui]`；选区监听改用 `ctx.addEventListener`）；`src/lib/messages.ts`（`PAGES` 一处定义，内容脚本和后台共用）；`wxt.config.ts`（加 `scripting` 和两个站的 host 权限，注释写明来由）；`tests/snapshot.test.mjs`（浏览器带真重载开关；新用例「插件更新或重新加载后，已开的页面不用刷新…」；原兜底用例改名、取最新服务进程）；`docs/PRD.md` FR-9 末句；`docs/LESSONS.md` L-13、L-21 补充，新增 L-24；`README.md` 权限表；`public/安装说明.txt`「更新」一段。
-- 测试：`node --test tests/*.test.mjs` 原样结果 `ℹ pass 55` / `ℹ fail 0`，连跑三遍一致（证据目录 `2026-11-19-fr9-reinject/full-1-summary.txt`、`full-2.txt`，文档定稿后最终版 `full-3-final.txt`）；`npm run compile` 无报错；`node scripts/check-rules.mjs` 通过。反向验证：旧代码下新用例报红「补装后不该再提醒」（`red-old-code.txt`）；只加 scripting 不加 host 权限仍红（`green-new-code.txt`）；去掉让位逻辑报红（同一条回答两套丝带，`red-without-stepdown.txt`）。
-- 验证：Playwright Chromium（无头），浏览器级 CDP `Extensions.loadUnpacked` 真重载（同扩展页「重新加载」）；没在常浩的真实 Chrome 里试。
-- 截图：无（界面没变，只是不再出提醒）。
-- 发布与回读：未发布；合并后 `npm run zip`。
-- 与授权不一致之处、遗留问题、范围外发现：① 常浩原批只说加 `scripting`，做的时候发现补装还要两个站的 host 权限（L-24），停下单独问过，常浩回「加两个站权限」。② 从本版之前的版本第一次升上来那一次，旧脚本不认让位，已开页面可能两条丝带、旧的还会提醒刷新，刷新一次后正常（常浩选的就是不处理这一情形）。③ 顺手改：README 权限表原来写「不要 debugger」、只列 chatgpt.com，已和现状对齐。④ 范围外：AGENTS「分工」还写「范围外的问题记进交接，不顺手修」，与全局第 3 节「代码库归你」不一致（骨架 0.3.1 已改），没动。⑤ 本项目没有 `docs/DECIDED.md`，要不要建由常浩定。
-- 本轮新坑：L-24。
+### 主线：审计两项高危修复｜完成 2/4
 
-## 生成图片的回答认不出：重新侦察，选择器补上这类回答（2026-11-18，Claude，常浩贴来插件复制的修复请求，要求重新侦察、改 adapter.ts；常浩刷新插件试过后说「试过了，提交」；已合并 PR #9（`ea687b9`）、无需发布）
-
-- 时间：开工 `2026-11-18 21:44`（约）。★ 来由：常浩在一个 chatgpt.com 对话页看到「ChatGPT 改版了」提醒，修复请求写回答选择器 0 个、提问 2 个，界面标记里有 `generated-image-gallery`。
-- 改了哪些文件：`src/lib/adapter.ts`（`ANSWER_SELECTOR` 加上「带消息编号、不在 `…:assistant` 里面的 `data-response-body`」；ChatGPT 的 `NOISE` 加上生成图片上的「编辑」「分享」按钮；`answerKey` 没有单元标记时用消息编号；`MD.keepButton`：生成图片的预览按钮）；`src/lib/markdown.ts`（按钮一律不转，`MD.keepButton` 例外，图片说明才进得了笔记）；`tests/fixtures/image-answer.html`（新：仿生成图片对话，两问两答，图片是 blob: 地址，图上叠按钮）；`tests/snapshot.test.mjs`（新 `describe('ChatGPT 生成图片的回答')` 3 个用例；改版自检用例里修复请求的选择器那行跟着改）；`docs/recon/2026-11-18-生成图片回答侦察记录.md`（新）；`docs/LESSONS.md`（L-23）。
-- 测试：`node --test tests/*.test.mjs` 原样结果 `ℹ pass 53` / `ℹ fail 0`（证据目录 `2026-11-18-生成图片-全量测试.log`）；`npm run compile` 无报错；`node scripts/check-rules.mjs` 通过。改代码前新用例报红「waiting for locator('#second clipper-ribbon')」超时（`2026-11-18-生成图片-改前红.log`）；中途没加 `keepButton` 时笔记用例报红（正文为空），未另存日志。中途：Playwright 浏览器缓存又不在了（L-16），`npx playwright install chromium` 装回。
-- 验证：Claude in Chrome 只读看了常浩 Chrome 里 4 个对话的结构（没读对话文字）：普通对话回答标记都在，只有生成图片的回答换了结构（详见侦察记录）。新选择器在真实页面上核过：生成图片对话认出 2/2，3 个普通对话新旧选择器命中完全相同（5/5、2/2、1/1），没有重复认出；图上按钮选择器只命中「编辑」「分享」4 个、不碰预览按钮。看完已关标签页。测试页（Playwright Chromium，无头）：两条回答都挂丝带、不提醒改版，长图和藏起按钮的真实渲染逐像素比通过（blob 图片嵌进去了），笔记提问是同一轮的、正文是「已生成图像 1」、没有按钮文字。真实 Chrome：常浩刷新插件后试过，回复「试过了，提交」（试了哪条回答、长图和笔记里图片是否正常没说明；内容脚本能读页面建的 blob 地址，按此推断成立）。
-- 截图：无（没有界面改动；真实页面截图含私人图片，未存）。
-- 发布与回读：未发布，无需发布；`npm run build` 已由测试跑过，未 `npm run zip`（等提交时一起）。
-- 与授权不一致之处、遗留问题、范围外发现：① Claude 自定：笔记里生成图片只写图片说明（blob 地址离开页面就失效，不写成图片链接，也没有另存原图）；图上「编辑」「分享」按钮不进长图。② 改了已有行为（只影响生成图片的回答，普通回答不变）：原来这类回答没有丝带、多轮时还弹改版提醒，现在能收藏、不再提醒。③ 修复请求里有一个 `data-talvt-turn-state="in_progress"`，推断复制时某张图还在生成，未核实。④ 生成图片的回答里如果还带文字说明，结构没见过，未覆盖。⑤ 修复请求里的回答选择器那行变长了（照实写新选择器）。
-- 本轮新坑：L-23。
+✅ 第 1 项并发覆盖：修前失败、修后通过，见 `item1-red.log` / `item1-green.log` 和 17 个最终回归。
+❓ 第 2 项更新恢复：整组写入、失败恢复和整段暂存已修；不完整更新的异常行为待常浩确认，尚不能算本项修完。
+📌 全量与目标环境验证：全量已执行，但 Chromium 启动受阻；真实环境未采用、未验收，待环境可运行后补验。
+✅ 总结和交接：授权证据目录 `summary.md`、本节 CURRENT 与全部原始测试日志。
 
 ## 改版提醒改成「查清了才提醒」，提醒上给下一步按钮（2026-11-11，Claude，常浩截图反馈「收藏按钮没挂上」只有显示、没有指引，看过三版预览后「按 C 改」，刷新插件在真实页面看过后「看过了，分两次提交」；已合并 PR #6（`717c6b6`）、无需发布）
 

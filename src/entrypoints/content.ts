@@ -355,9 +355,9 @@ async function captureThread() {
       }
       for (const [i, file] of images.entries()) {
         card.step(3, 'on', `${i + 1}/${images.length}`);
-        await send({ type: 'thread-file', folder: begin.folder!, file });
+        await send({ type: 'thread-file', folder: begin.folder!, job: begin.job!, file });
       }
-      const end = await send({ type: 'thread-end', id, folder: begin.folder!, note, images: images.map(f => f.name) });
+      const end = await send({ type: 'thread-end', id, folder: begin.folder!, job: begin.job!, note, images: images.map(f => f.name) });
       const status = begin.updated ? '已更新' : '已存入', warn = warns.length > 0;
       card.step(3, 'ok', status);
       const open: Place['open'] = end.open ? { label: '在 Obsidian 里打开 ↗', href: end.open, run: () => openLink(end.open!) }
