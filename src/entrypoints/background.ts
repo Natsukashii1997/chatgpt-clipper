@@ -1,5 +1,5 @@
 import { DOWNLOAD_ROOT, PAGES, PART_CHARS, type PrintPart, type Request, type Response } from '@/lib/messages';
-import { dirState, finishThread, getSaved, loadDir, loadWhere, obsidianUrl, saveCollection, threadFolder, writeThreadFile } from '@/lib/vault';
+import { cancelThread, dirState, finishThread, getSaved, loadDir, loadWhere, obsidianUrl, saveCollection, threadFolder, writeThreadFile } from '@/lib/vault';
 
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener((msg: Request, _sender, reply: (r: Response) => void) => {
@@ -23,6 +23,10 @@ async function reinject() {
 }
 
 async function handle(msg: Request): Promise<Response> {
+  if (msg.type === 'thread-cancel') {
+    await cancelThread(msg.job);
+    return { ok: true };
+  }
   if (msg.type === 'save' || msg.type.startsWith('thread-')) {
     const dir = await loadDir(), state = await dirState(dir);
     if (!dir) return { ok: false, code: 'no-folder', error: '还没选 Vault 文件夹' };

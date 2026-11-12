@@ -12,6 +12,7 @@ export type Request =
   | { type: 'options' }
   | { type: 'image'; url: string }
   // 整段收藏（FR-13）分批写：开头定文件夹，每张长图一条消息（一起发可能超过消息大小上限），最后写笔记
+  | { type: 'thread-cancel'; job: string }
   | { type: 'thread-begin'; id: string; folder: string }
   | { type: 'thread-file'; folder: string; job: string; file: DownloadFile }
   | { type: 'thread-end'; id: string; folder: string; job: string; note: DownloadFile; images: string[] }

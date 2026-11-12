@@ -32,6 +32,7 @@ function storage() {
             let scheduled = false;
             tx.objectStore = () => ({
               get: key => request(() => clone(values.get(key))),
+              getAllKeys: () => request(() => [...values.keys()]),
               put: (value, key) => { const copy = clone(value); return request(() => { keys.push(key); changes.push(() => values.set(key, copy)); return key; }); },
               delete: key => request(() => changes.push(() => values.delete(key))),
             });
@@ -73,6 +74,8 @@ function storage() {
       }
       const files = dirs.get(name);
       return {
+        async isSameEntry(other) { return other?._files === files; },
+        _files: files,
         async getFileHandle(file, opts) {
           if (!files.has(file)) {
             if (!opts?.create) throw new DOMException('', 'NotFoundError');
@@ -318,6 +321,108 @@ test('整段图片暂存失败（如配额不足）：旧组不变，未收齐�
   const b = await threadFolder(s.dir, 'T', name);
   s.faults.push({ phase: 'idb-commit', file: `thread-job:${b.job}` });
   await assert.rejects(vault.writeThreadFile(s.dir, b.job, { name: 'answer-01.png', data: 'NEW_1' }), /注入失败/);
-  await assert.rejects(finishThread(s.dir, 'T', name, { name: 'new.md', data: 'NEW_MD' }, ['answer-01.png'], b.job), /没有收齐/);
+  await assert.rejects(finishThread(s.dir, 'T', name, { name: 'new.md', data: 'NEW_MD' }, ['answer-01.png'], b.job), /任务已失效/);
   assert.deepEqual(await s.read(name), { 'old.md': 'OLD_MD', 'answer-01.png': 'OLD_1' });
+});
+
+
+test('残留预留目录被另一条收藏占用后，重试必须分配新目录', async () => {
+  const s = storage(), name = '2026-11-12 同名';
+  await threadFolder(s.dir, 'T', name);
+  await s.dir.removeEntry(name);
+  await saveCollection(s.dir, 'B', name, files('B'));
+  const retry = await threadFolder(s.dir, 'T', name);
+  await vault.writeThreadFile(s.dir, retry.job, { name: 'answer-01.png', data: 'T_PNG' });
+  await finishThread(s.dir, 'T', retry.name, { name: 'note.md', data: 'T_MD' }, ['answer-01.png'], retry.job);
+  assert.deepEqual(await s.read(name), { 'note.md': 'B_MD', 'answer.png': 'B_PNG' });
+  assert.notEqual((await getSaved('T')).folder, (await getSaved('B')).folder);
+});
+
+test('传图后预留目录被替换，结束提交拒绝写入另一条收藏', async () => {
+  const s = storage(), name = '2026-11-12 同名';
+  const b = await threadFolder(s.dir, 'T', name);
+  await vault.writeThreadFile(s.dir, b.job, { name: 'answer-01.png', data: 'T_PNG' });
+  await s.dir.removeEntry(name);
+  await saveCollection(s.dir, 'B', name, files('B'));
+  await assert.rejects(finishThread(s.dir, 'T', name, { name: 'note.md', data: 'T_MD' }, ['answer-01.png'], b.job), /文件夹.*替换/);
+  assert.deepEqual(await s.read(name), { 'note.md': 'B_MD', 'answer.png': 'B_PNG' });
+  assert.equal(await getSaved('T'), undefined);
+});
+
+
+test('第二张暂存失败后删除本任务图片；完整重试成功后没有残留', async () => {
+  const s = storage(), name = '2026-11-12 整段';
+  const b = await threadFolder(s.dir, 'T', name);
+  await vault.writeThreadFile(s.dir, b.job, { name: 'answer-01.png', data: 'FIRST' });
+  s.faults.push({ phase: 'idb-commit', file: `thread-job:${b.job}` });
+  await assert.rejects(vault.writeThreadFile(s.dir, b.job, { name: 'answer-02.png', data: 'SECOND' }), /注入失败/);
+  assert.equal(s.values.has(`thread-job:${b.job}`), false);
+  const retry = await threadFolder(s.dir, 'T', name);
+  await vault.writeThreadFile(s.dir, retry.job, { name: 'answer-01.png', data: 'RETRY' });
+  await finishThread(s.dir, 'T', retry.name, { name: 'note.md', data: 'RETRY_MD' }, ['answer-01.png'], retry.job);
+  assert.deepEqual([...s.values.keys()].filter(k => k.startsWith('thread-')), []);
+});
+
+test('取消只清本任务，保留同一对话的并发任务与预留；成功结束清空暂存', async () => {
+  const s = storage(), name = '2026-11-12 整段';
+  const a = await threadFolder(s.dir, 'T', name), b = await threadFolder(s.dir, 'T', name);
+  await vault.writeThreadFile(s.dir, a.job, { name: 'answer-01.png', data: 'A' });
+  await vault.writeThreadFile(s.dir, b.job, { name: 'answer-01.png', data: 'B' });
+  await vault.cancelThread(a.job);
+  assert.equal(s.values.has(`thread-job:${a.job}`), false);
+  assert.equal(s.values.has(`thread-job:${b.job}`), true);
+  assert.equal(s.values.has('thread-folder:T'), true);
+  await finishThread(s.dir, 'T', name, { name: 'note.md', data: 'B_MD' }, ['answer-01.png'], b.job);
+  assert.deepEqual(await s.read(name), { 'note.md': 'B_MD', 'answer-01.png': 'B' });
+  assert.deepEqual([...s.values.keys()].filter(k => k.startsWith('thread-')), []);
+});
+
+test('模块重启后下次收藏回收超过24小时的暂存，近期仍活跃的并发任务受保护', async () => {
+  const s = storage(), name = '2026-11-12 整段', clock = Date.now;
+  let now = clock();
+  Date.now = () => now;
+  try {
+    const stale = await threadFolder(s.dir, 'OLD', name);
+    await vault.writeThreadFile(s.dir, stale.job, { name: 'answer-01.png', data: 'OLD' });
+    now += 23 * 60 * 60 * 1000;
+    const active = await threadFolder(s.dir, 'ACTIVE', name);
+    now += 2 * 60 * 60 * 1000;
+    const restarted = await import(`../src/lib/vault.ts?expiry=${now}`);
+    await restarted.saveCollection(s.dir, 'NEW', '2026-11-12 新收藏', files('NEW'));
+    assert.equal(s.values.has(`thread-job:${stale.job}`), false);
+    assert.equal(s.values.has('thread-folder:OLD'), false);
+    assert.equal(s.values.has(`thread-job:${active.job}`), true);
+    await restarted.writeThreadFile(s.dir, active.job, { name: 'answer-01.png', data: 'ACTIVE' });
+    await restarted.finishThread(s.dir, 'ACTIVE', active.name, { name: 'note.md', data: 'ACTIVE_MD' }, ['answer-01.png'], active.job);
+    assert.deepEqual(await s.read(active.name), { 'note.md': 'ACTIVE_MD', 'answer-01.png': 'ACTIVE' });
+  } finally { Date.now = clock; }
+});
+
+test('成功结束较早任务不会删除同一对话另一活跃任务的预留', async () => {
+  const s = storage(), name = '2026-11-12 整段';
+  const a = await threadFolder(s.dir, 'T', name), b = await threadFolder(s.dir, 'T', name);
+  await finishThread(s.dir, 'T', name, { name: 'note.md', data: 'A' }, [], a.job);
+  assert.equal(s.values.has(`thread-job:${a.job}`), false);
+  assert.equal(s.values.has(`thread-job:${b.job}`), true);
+  assert.equal(s.values.get('thread-folder:T').job, b.job);
+  await finishThread(s.dir, 'T', name, { name: 'note.md', data: 'B' }, [], b.job);
+  assert.deepEqual([...s.values.keys()].filter(k => k.startsWith('thread-')), []);
+});
+
+test('传图续期保护长任务；没有时间戳的旧版暂存会回收', async () => {
+  const s = storage(), clock = Date.now;
+  let now = clock();
+  Date.now = () => now;
+  try {
+    const b = await threadFolder(s.dir, 'ACTIVE', '2026-11-12 整段');
+    now += 23 * 60 * 60 * 1000;
+    await vault.writeThreadFile(s.dir, b.job, { name: 'answer-01.png', data: 'ACTIVE' });
+    s.values.set('thread-job:legacy', { dir: s.dir, id: 'LEGACY', name: 'unused', files: [{ name: 'answer-01.png', data: 'LEGACY' }] });
+    now += 2 * 60 * 60 * 1000;
+    await saveCollection(s.dir, 'NEW', '2026-11-12 新收藏', files('NEW'));
+    assert.equal(s.values.has('thread-job:legacy'), false);
+    assert.equal(s.values.has(`thread-job:${b.job}`), true);
+    await finishThread(s.dir, 'ACTIVE', b.name, { name: 'note.md', data: 'ACTIVE_MD' }, ['answer-01.png'], b.job);
+    assert.deepEqual(await s.read(b.name), { 'note.md': 'ACTIVE_MD', 'answer-01.png': 'ACTIVE' });
+  } finally { Date.now = clock; }
 });

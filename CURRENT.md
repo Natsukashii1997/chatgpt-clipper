@@ -2,7 +2,48 @@
 
 当前阶段目标：一键导出 PDF 给 AI（FR-15），分三批：① 删「为什么存」② 导出 PDF ③ 常浩真实 Chrome 验收。（2026-11-10 常浩确认）已完成，2026-11-11 合并（#5）。
 
-更新：2026-11-12。本 worktree 基于 `2e49cd7`（分支 `codex/audit-fix-1112`，用户提供草稿 PR #7）完成第 3 轮：常浩已确认的已有收藏缺 PNG / MD 时拒绝覆盖已实现；存储回归 23/23、类型检查与构建通过。全量仍因 Chromium 启动受阻，不能称全部通过。本轮未提交、未推送、未联网、未采用到真实插件。唯一下一步：在可运行浏览器的环境补验，当前沙箱内不再重复启动。
+更新：2026-11-19。FR-9 改成「插件更新后给已开页面补装脚本」（#12，常浩选「只补装」、同意加 scripting 和两个站的 host 权限），PR 待合并。下一步：常浩合并后，在真实 Chrome 里重新加载插件、不刷新已开的 ChatGPT 页面点丝带收藏一次。之前的生成图片修复（#9）、FR-15、FR-9 C 版已合并。
+
+
+## 插件更新后给已开页面补装脚本，不用刷新（FR-9「只补装」）（2026-11-19，Claude，常浩选「换个改法（只补装）」，又同意加 chatgpt.com、claude.ai 两个站的 host 权限；已提交、PR 待合并，未发布）
+
+- 时间：开工 `2026-11-19 16:07`。★ 来由：积压清单组 7（全局 G-35），碰到 FR-9 已定内容，按第 15 节问过（#12）：常浩选「只补装，补装失败仍提醒刷新，第一次升级的两条丝带接受」。
+- 改了哪些文件：`src/entrypoints/background.ts`（`runtime.onInstalled` 安装、更新时按 `PAGES` 查已开标签页，`scripting.executeScript` 补装 `content-scripts/content.js`，失败的只记日志）；`src/entrypoints/content.ts`（`main(ctx)`：新的一份启动时 WXT 让旧的作废，旧的断开监听、清计时、收起自己的 `[data-clipper-ui]`；选区监听改用 `ctx.addEventListener`）；`src/lib/messages.ts`（`PAGES` 一处定义，内容脚本和后台共用）；`wxt.config.ts`（加 `scripting` 和两个站的 host 权限，注释写明来由）；`tests/snapshot.test.mjs`（浏览器带真重载开关；新用例「插件更新或重新加载后，已开的页面不用刷新…」；原兜底用例改名、取最新服务进程）；`docs/PRD.md` FR-9 末句；`docs/LESSONS.md` L-13、L-21 补充，新增 L-24；`README.md` 权限表；`public/安装说明.txt`「更新」一段。
+- 测试：`node --test tests/*.test.mjs` 原样结果 `ℹ pass 55` / `ℹ fail 0`，连跑三遍一致（证据目录 `2026-11-19-fr9-reinject/full-1-summary.txt`、`full-2.txt`，文档定稿后最终版 `full-3-final.txt`）；`npm run compile` 无报错；`node scripts/check-rules.mjs` 通过。反向验证：旧代码下新用例报红「补装后不该再提醒」（`red-old-code.txt`）；只加 scripting 不加 host 权限仍红（`green-new-code.txt`）；去掉让位逻辑报红（同一条回答两套丝带，`red-without-stepdown.txt`）。
+- 验证：Playwright Chromium（无头），浏览器级 CDP `Extensions.loadUnpacked` 真重载（同扩展页「重新加载」）；没在常浩的真实 Chrome 里试。
+- 截图：无（界面没变，只是不再出提醒）。
+- 发布与回读：未发布；合并后 `npm run zip`。
+- 与授权不一致之处、遗留问题、范围外发现：① 常浩原批只说加 `scripting`，做的时候发现补装还要两个站的 host 权限（L-24），停下单独问过，常浩回「加两个站权限」。② 从本版之前的版本第一次升上来那一次，旧脚本不认让位，已开页面可能两条丝带、旧的还会提醒刷新，刷新一次后正常（常浩选的就是不处理这一情形）。③ 顺手改：README 权限表原来写「不要 debugger」、只列 chatgpt.com，已和现状对齐。④ 范围外：AGENTS「分工」还写「范围外的问题记进交接，不顺手修」，与全局第 3 节「代码库归你」不一致（骨架 0.3.1 已改），没动。⑤ 本项目没有 `docs/DECIDED.md`，要不要建由常浩定。
+- 本轮新坑：L-24。
+
+## 生成图片的回答认不出：重新侦察，选择器补上这类回答（2026-11-18，Claude，常浩贴来插件复制的修复请求，要求重新侦察、改 adapter.ts；常浩刷新插件试过后说「试过了，提交」；已合并 PR #9（`ea687b9`）、无需发布）
+
+- 时间：开工 `2026-11-18 21:44`（约）。★ 来由：常浩在一个 chatgpt.com 对话页看到「ChatGPT 改版了」提醒，修复请求写回答选择器 0 个、提问 2 个，界面标记里有 `generated-image-gallery`。
+- 改了哪些文件：`src/lib/adapter.ts`（`ANSWER_SELECTOR` 加上「带消息编号、不在 `…:assistant` 里面的 `data-response-body`」；ChatGPT 的 `NOISE` 加上生成图片上的「编辑」「分享」按钮；`answerKey` 没有单元标记时用消息编号；`MD.keepButton`：生成图片的预览按钮）；`src/lib/markdown.ts`（按钮一律不转，`MD.keepButton` 例外，图片说明才进得了笔记）；`tests/fixtures/image-answer.html`（新：仿生成图片对话，两问两答，图片是 blob: 地址，图上叠按钮）；`tests/snapshot.test.mjs`（新 `describe('ChatGPT 生成图片的回答')` 3 个用例；改版自检用例里修复请求的选择器那行跟着改）；`docs/recon/2026-11-18-生成图片回答侦察记录.md`（新）；`docs/LESSONS.md`（L-23）。
+- 测试：`node --test tests/*.test.mjs` 原样结果 `ℹ pass 53` / `ℹ fail 0`（证据目录 `2026-11-18-生成图片-全量测试.log`）；`npm run compile` 无报错；`node scripts/check-rules.mjs` 通过。改代码前新用例报红「waiting for locator('#second clipper-ribbon')」超时（`2026-11-18-生成图片-改前红.log`）；中途没加 `keepButton` 时笔记用例报红（正文为空），未另存日志。中途：Playwright 浏览器缓存又不在了（L-16），`npx playwright install chromium` 装回。
+- 验证：Claude in Chrome 只读看了常浩 Chrome 里 4 个对话的结构（没读对话文字）：普通对话回答标记都在，只有生成图片的回答换了结构（详见侦察记录）。新选择器在真实页面上核过：生成图片对话认出 2/2，3 个普通对话新旧选择器命中完全相同（5/5、2/2、1/1），没有重复认出；图上按钮选择器只命中「编辑」「分享」4 个、不碰预览按钮。看完已关标签页。测试页（Playwright Chromium，无头）：两条回答都挂丝带、不提醒改版，长图和藏起按钮的真实渲染逐像素比通过（blob 图片嵌进去了），笔记提问是同一轮的、正文是「已生成图像 1」、没有按钮文字。真实 Chrome：常浩刷新插件后试过，回复「试过了，提交」（试了哪条回答、长图和笔记里图片是否正常没说明；内容脚本能读页面建的 blob 地址，按此推断成立）。
+- 截图：无（没有界面改动；真实页面截图含私人图片，未存）。
+- 发布与回读：未发布，无需发布；`npm run build` 已由测试跑过，未 `npm run zip`（等提交时一起）。
+- 与授权不一致之处、遗留问题、范围外发现：① Claude 自定：笔记里生成图片只写图片说明（blob 地址离开页面就失效，不写成图片链接，也没有另存原图）；图上「编辑」「分享」按钮不进长图。② 改了已有行为（只影响生成图片的回答，普通回答不变）：原来这类回答没有丝带、多轮时还弹改版提醒，现在能收藏、不再提醒。③ 修复请求里有一个 `data-talvt-turn-state="in_progress"`，推断复制时某张图还在生成，未核实。④ 生成图片的回答里如果还带文字说明，结构没见过，未覆盖。⑤ 修复请求里的回答选择器那行变长了（照实写新选择器）。
+- 本轮新坑：L-23。
+
+## 交叉审查返修（2026-11-12，Codex，常浩授权逐项核实与返修；未提交、未发布）
+
+- 时间：开工 `2026-11-12 16:03`（本轮 `date '+%F %H:%M'` 记录；实质修改前）。来由：只读交叉审查报告 `xreview/report.md` 结论「修完再合」，本轮不联网、不提交、不推送。
+- 改了哪些文件：`src/lib/vault.ts`（预留与提交核对目录句柄身份；暂存失败清理、取消、24 小时租期与下次收藏回收；清理只移除自己持有的预留）；`src/lib/messages.ts`、`src/entrypoints/background.ts`（取消任务消息，取消不依赖 Vault 授权与恢复成功）；`src/entrypoints/content.ts`（传图或最终提交失败，取消暂存并沿 FR-5 下载本轮已生成文件）；`tests/vault-save.test.mjs`（目录身份模拟、7 条新回归、配额失败后的旧断言更新）；`tests/thread-save.test.mjs`（真实 captureThread/send/后台 handle 的 5 条合成调用链测试）；`CURRENT.md`（本节与状态）。指定证据目录 `summary.md` 末尾追加「交叉审查返修」，另存原样日志、指纹与本地 PR 测试更正文案。我顺手改的：无；无新增依赖，未改版本号／CHANGELOG（本仓库没有相应强制约定）。
+- 测试：第 1 项修前 `ℹ pass 0` / `ℹ fail 2`，修后存储 `ℹ pass 25` / `ℹ fail 0`；第 2 项修前 `ℹ pass 0` / `ℹ fail 3`，修后 `ℹ pass 28` / `ℹ fail 0`；第 3 项修前 `ℹ pass 1` / `ℹ fail 4`，修后 `ℹ pass 5` / `ℹ fail 0`。第 4 项 `/usr/bin/python3` 本地证据核对修前退出码 1（73/73 与 67/67 不一致）、更正文案核对退出码 0。最终 `node --test tests/*.test.mjs` 原样结果 `ℹ tests 85` / `ℹ pass 44` / `ℹ fail 15` / `ℹ cancelled 26`（退出码 1，`xrepair-full-tests.log`）；Chromium 在进入页面前 SIGABRT，清理调用链 `kill EPERM`，浏览器断言未验证。`npm run compile`、`npm run build`、`node scripts/check-rules.mjs` 均退出码 0。交接写后非浏览器回归原样结果 `ℹ pass 44` / `ℹ fail 0`（退出码 0，`xrepair-non-browser-tests.log`）；`git diff --check` 无输出、退出码 0。
+- 验证：只用合成对话、内存 IndexedDB / File System Access。最终源码及测试文件指纹、HEAD、cwd、全量命令与退出码见证据目录 `xrepair-run.json`。目录替换后的重试改分配新目录、开始后替换则拒绝提交，B 的文件与索引不变；暂存失败后无旧 job 图片，取消／成功结束不误删并发任务预留；模拟重启、25 小时旧任务回收与近期任务保护、传图续期、旧版无时间戳暂存回收。消息链实际发出下载请求与取消请求，未发生真实下载；Chrome 权限、句柄持久化、大 Blob 和真实 worker 中断未验证。回收在下次单条／整段收藏开始时触发，插件不再使用时不会承诺到点自动回收；IDB 持续故障时清理仍可能失败。
+- 截图：无（没有视觉设计改动；浏览器启动受阻，不能做真实界面对照）。正常成功文案、丝带、moved、不选 Vault 只下载长图、FR-13 漏读保存和已确认的单条不完整更新保护不变；合成成功／无 Vault 路径有回归，真实界面仍待浏览器环境核验。
+- 发布与回读：未提交、未推送、未联网、未发布，HEAD 仍为 `ce482a8`。构建产物仅在本 worktree `.output/chrome-mv3/`；未重载真实插件、未触碰真实 Vault。旧审查及日志不改，新增本地 `xrepair-pr-test-correction.md`，远端 PR 的 73/73 表述未修改。
+- 与授权不一致之处、遗留问题、范围外发现：无范围扩展；报告 4 项均成立，1–3 已本地返修，4 的本地证据与文案已纠正、远端待以后获得联网写入授权再改。建议另开 issue：无（报告未列与本 PR 无关的既有问题）；需常浩确认的可见行为变化：无，本轮只恢复既定保存保护与 FR-5 兜底。全量浏览器与目标环境验证仍受阻，不能合并绿灯。旧的历史交接保留，当前事实以本节和 `summary.md` 末尾为准。
+- 本轮新坑：无（修补既有审计入口，未新增 LESSONS 条目）。
+
+### 主线：交叉审查返修｜完成 3/4
+
+✅ 目录归属：修前 2 失败、修后存储 25 通过，目录身份保护已实现。
+✅ 暂存生命周期：修前 3 失败、修后存储 28 通过，最终全量含新增边界共 30 个存储测试通过。
+✅ 整段下载兜底：修前 4 失败、修后调用链 5 通过；成功和无 Vault 路径回归通过。
+📌 全量验证、证据纠正和交接：本地全量已跑、证据和交接已落盘，浏览器环境受阻；等待可启动 Chromium 的环境按相同代码指纹补验，PR 保持草稿。
 
 ## 第 3 轮：已有收藏缺 PNG / MD 时保留旧版本（2026-11-12，Codex，常浩已单独确认推荐行为；本轮未提交、未发布）
 

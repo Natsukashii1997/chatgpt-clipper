@@ -66,8 +66,8 @@ export const getSaved = async (id: string): Promise<Saved | undefined> => {
 
 // 所有标签页共用后台的队列，保护「查目录 → 分配名字 → 写入 → 记索引」；失败不堵住下一次收藏。
 let writing: Promise<unknown> = Promise.resolve();
-function serial<T>(run: () => Promise<T>): Promise<T> {
-  const next = writing.then(async () => { await recover(); return run(); });
+function serial<T>(run: () => Promise<T>, restore = true): Promise<T> {
+  const next = writing.then(async () => { if (restore) await recover(); return run(); });
   writing = next.catch(() => undefined);
   return next;
 }
@@ -142,7 +142,7 @@ async function commit(dir: FileSystemDirectoryHandle, id: string, name: string, 
 /** 写一条收藏（FR-5）。新回答：新建文件夹，重名加序号。同一条回答：覆盖原文件夹；文件夹名里的标题和现在应有的不一样
  *  （命名规则调整、标题变了），且里面只有插件写的长图和一篇笔记，就改成新名字（日期沿用第一次收藏的）；原文件夹被整理走了就不写 */
 export function saveCollection(dir: FileSystemDirectoryHandle, id: string, folder: string, files: VaultFile[]) {
-  return serial(() => saveOne(dir, id, folder, files));
+  return serial(async () => { await reapThreadJobs(); return saveOne(dir, id, folder, files); });
 }
 
 async function saveOne(dir: FileSystemDirectoryHandle, id: string, folder: string, files: VaultFile[]):
@@ -163,19 +163,21 @@ async function saveOne(dir: FileSystemDirectoryHandle, id: string, folder: strin
 /** 整段收藏（FR-13）开头：定下写到哪个文件夹并建好。id 是对话地址：收藏过且原文件夹还在就沿用（覆盖）；
  *  原文件夹被整理走了返回 moved、不写；没收藏过就新建，重名加序号 */
 const THREAD_JOB = 'thread-job:', THREAD_FOLDER = 'thread-folder:';
-interface ThreadJob { dir: FileSystemDirectoryHandle; id: string; name: string; files: VaultFile[] }
+interface ThreadFolder { dir: FileSystemDirectoryHandle; target?: FileSystemDirectoryHandle; name: string; job?: string }
+interface ThreadJob { dir: FileSystemDirectoryHandle; target?: FileSystemDirectoryHandle; id: string; name: string; touched: number; files: VaultFile[] }
 export function threadFolder(dir: FileSystemDirectoryHandle, id: string, folder: string) {
   return serial(async (): Promise<{ name: string; job?: string; updated?: boolean; moved?: boolean }> => {
+    await reapThreadJobs();
     const prev = await getSaved(id);
     if (prev && !(await hasFolder(dir, prev.folder))) return { name: prev.folder, moved: true };
-    const reserved = await idb<{ dir: FileSystemDirectoryHandle; name: string } | undefined>('readonly', s => s.get(THREAD_FOLDER + id));
-    const reuse = reserved && await dir.isSameEntry(reserved.dir) && await hasFolder(dir, reserved.name);
+    const reserved = await idb<ThreadFolder | undefined>('readonly', s => s.get(THREAD_FOLDER + id));
+    const reuse = reserved && await dir.isSameEntry(reserved.dir) && await sameFolder(dir, reserved.name, reserved.target);
     const name = prev?.folder ?? (reuse ? reserved.name : await newFolder(dir, folder));
-    await dir.getDirectoryHandle(name, { create: true });
+    const target = await dir.getDirectoryHandle(name, { create: true });
     const job = crypto.randomUUID();
     await idb('readwrite', s => {
-      s.put({ dir, name }, THREAD_FOLDER + id);
-      return s.put({ dir, id, name, files: [] } satisfies ThreadJob, THREAD_JOB + job);
+      s.put({ dir, name, target, job }, THREAD_FOLDER + id);
+      return s.put({ dir, target, id, name, touched: Date.now(), files: [] } satisfies ThreadJob, THREAD_JOB + job);
     });
     return { name, job, updated: !!prev };
   });
@@ -186,8 +188,15 @@ export function writeThreadFile(dir: FileSystemDirectoryHandle, job: string, fil
   return serial(async () => {
     const staged = await idb<ThreadJob | undefined>('readonly', s => s.get(THREAD_JOB + job));
     if (!staged || !(await dir.isSameEntry(staged.dir))) throw new Error('整段收藏任务已失效，请重新收藏');
-    staged.files = [...staged.files.filter(f => f.name !== file.name), file];
-    await idb('readwrite', s => s.put(staged, THREAD_JOB + job));
+    try {
+      if (expired(staged)) throw new Error('整段收藏任务已过期，请重新收藏');
+      staged.files = [...staged.files.filter(f => f.name !== file.name), file];
+      staged.touched = Date.now();
+      await idb('readwrite', s => s.put(staged, THREAD_JOB + job));
+    } catch (e) {
+      await dropThreadJob(job).catch(() => undefined);
+      throw e;
+    }
   });
 }
 
@@ -195,24 +204,56 @@ export function writeThreadFile(dir: FileSystemDirectoryHandle, job: string, fil
 export function finishThread(dir: FileSystemDirectoryHandle, id: string, name: string, note: VaultFile, images: string[], job: string) {
   return serial(async () => {
     const staged = await idb<ThreadJob | undefined>('readonly', s => s.get(THREAD_JOB + job));
-    if (!staged || staged.id !== id || staged.name !== name || !(await dir.isSameEntry(staged.dir)))
+    if (!staged || expired(staged) || staged.id !== id || staged.name !== name || !(await dir.isSameEntry(staged.dir)))
       throw new Error('整段收藏任务已失效，请重新收藏');
     if (images.length !== staged.files.length || new Set(images).size !== images.length || images.some(f => !staged.files.some(s => s.name === f)))
       throw new Error('整段收藏的长图没有收齐，请重新收藏');
     const prev = await getSaved(id);
-    if (!(await hasFolder(dir, name))) throw new Error('原收藏文件夹已被整理走，这次没有重写');
+    if (!(await sameFolder(dir, name, staged.target))) throw new Error('原收藏文件夹已被整理走或替换，这次没有重写');
     const sub = await dir.getDirectoryHandle(name), stale: string[] = [];
     for await (const [f, h] of sub.entries())
       if (h.kind === 'file' && ((THREAD_IMAGE.test(f) && !images.includes(f)) || (f === prev?.note && f !== note.name))) stale.push(f);
     try {
       await commit(dir, id, name, [note, ...staged.files], stale);
     } finally {
-      await idb('readwrite', s => {
-        s.delete(THREAD_FOLDER + id);
-        return s.delete(THREAD_JOB + job);
-      }).catch(() => undefined);
+      await dropThreadJob(job).catch(() => undefined);
     }
   });
+}
+
+// 任务租期随传图续期。worker / 页面中断无法通知时，在下次收藏时回收超过一天的暂存。
+// 未带时间的旧版本任务也不能无限保留；近期并发任务不清理。文件夹本身不删除，避免误删用户文件。
+const THREAD_TTL = 24 * 60 * 60 * 1000;
+const expired = (job: ThreadJob) => !Number.isFinite(job.touched) || Date.now() - job.touched >= THREAD_TTL;
+async function dropThreadJob(job: string) {
+  const staged = await idb<ThreadJob | undefined>('readonly', s => s.get(THREAD_JOB + job));
+  if (!staged) return;
+  const reserved = await idb<ThreadFolder | undefined>('readonly', s => s.get(THREAD_FOLDER + staged.id));
+  await idb('readwrite', s => {
+    if (reserved?.job === job) s.delete(THREAD_FOLDER + staged.id);
+    return s.delete(THREAD_JOB + job);
+  });
+}
+
+/** 取消只处理本机暂存，不依赖 Vault 授权和故障恢复成功，不影响其他任务。 */
+export function cancelThread(job: string) {
+  return serial(() => dropThreadJob(job), false);
+}
+
+async function reapThreadJobs() {
+  const keys = await idb<IDBValidKey[]>('readonly', s => s.getAllKeys());
+  for (const key of keys) {
+    if (typeof key !== 'string' || !key.startsWith(THREAD_JOB)) continue;
+    const job = await idb<ThreadJob | undefined>('readonly', s => s.get(key));
+    if (job && expired(job)) await dropThreadJob(key.slice(THREAD_JOB.length));
+  }
+}
+
+/** 目录名可被删除后重用；持久句柄才代表预留时的那一个目录。旧版本缺句柄的预留不复用。 */
+async function sameFolder(dir: FileSystemDirectoryHandle, name: string, target?: FileSystemDirectoryHandle) {
+  if (!target) return false;
+  try { return await target.isSameEntry(await dir.getDirectoryHandle(name)); }
+  catch (e) { if (['NotFoundError', 'TypeMismatchError'].includes((e as DOMException).name)) return false; throw e; }
 }
 
 /** 整段收藏的长图：answer-01.png、answer-02.png…… */

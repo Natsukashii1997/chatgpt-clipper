@@ -345,6 +345,7 @@ async function captureThread() {
     const pdf = pdfAction({ title: `${title}（整段）`, site: SITE_NAME, url: base, captured: started, rounds: pdfRounds, thread: true }, folder);
     const begin = (await browser.runtime.sendMessage({ type: 'thread-begin', id, folder } satisfies Request)
       .catch((e: Error) => ({ ok: false, error: e.message }))) as Response | undefined;
+    let failure = begin?.ok ? undefined : begin;
     if (begin?.ok) {
       const [dir = '', ...rest] = (begin.path ?? '').split('/'), sub = rest.join('/'), date = sub.match(/^\d{4}-\d{2}-\d{2}/)?.[0] ?? '';
       const head = sub.slice(date.length).trim() || title;
@@ -353,29 +354,36 @@ async function captureThread() {
         card.finish(true, '已收藏过', { icon: '📁', head, sub: `原文件夹已不在「${dir}」里（可能整理走了），这次没有重写` }, undefined, 8000, pdf);
         return;
       }
-      for (const [i, file] of images.entries()) {
-        card.step(3, 'on', `${i + 1}/${images.length}`);
-        await send({ type: 'thread-file', folder: begin.folder!, job: begin.job!, file });
+      try {
+        for (const [i, file] of images.entries()) {
+          card.step(3, 'on', `${i + 1}/${images.length}`);
+          await send({ type: 'thread-file', folder: begin.folder!, job: begin.job!, file });
+        }
+        const end = await send({ type: 'thread-end', id, folder: begin.folder!, job: begin.job!, note, images: images.map(f => f.name) });
+        const status = begin.updated ? '已更新' : '已存入', warn = warns.length > 0;
+        card.step(3, 'ok', status);
+        const open: Place['open'] = end.open ? { label: '在 Obsidian 里打开 ↗', href: end.open, run: () => openLink(end.open!) }
+          : { label: '设置 Obsidian 位置后可直接打开 ↗', run: () => void send({ type: 'options' }) };
+        card.finish(true, warn ? '已收藏，但可能不完整' : begin.updated ? '已更新整段' : '已收藏整段',
+          warn ? { icon: '⚠️', head: warns.join('；'), sub: '能存的部分已存好', warn, open } : { icon: '📁', head, sub: [date, dir].filter(Boolean).join(' · '), open },
+          undefined, warn ? 0 : 8000, pdf);
+        return;
+      } catch (e) {
+        // 本轮生成结果仍在内容脚本内；传图或最终提交失败与 begin 失败一样退回下载。
+        // 取消不依赖 Vault 授权；若后台已不可用，后续收藏会回收过期暂存。
+        await send({ type: 'thread-cancel', job: begin.job! }).catch(() => undefined);
+        failure = { ok: false, error: e instanceof Error ? e.message : String(e) };
       }
-      const end = await send({ type: 'thread-end', id, folder: begin.folder!, job: begin.job!, note, images: images.map(f => f.name) });
-      const status = begin.updated ? '已更新' : '已存入', warn = warns.length > 0;
-      card.step(3, 'ok', status);
-      const open: Place['open'] = end.open ? { label: '在 Obsidian 里打开 ↗', href: end.open, run: () => openLink(end.open!) }
-        : { label: '设置 Obsidian 位置后可直接打开 ↗', run: () => void send({ type: 'options' }) };
-      card.finish(true, warn ? '已收藏，但可能不完整' : begin.updated ? '已更新整段' : '已收藏整段',
-        warn ? { icon: '⚠️', head: warns.join('；'), sub: '能存的部分已存好', warn, open } : { icon: '📁', head, sub: [date, dir].filter(Boolean).join(' · '), open },
-        undefined, warn ? 0 : 8000, pdf);
-      return;
     }
     // 写不进 Vault：退回浏览器下载，一个文件一条消息；没选 Vault 文件夹只下载长图（同单条收藏）
-    const noVault = begin?.code === 'no-folder', dl = noVault ? images : [note, ...images];
-    card.step(3, 'bad', noVault ? '无 Obsidian' : begin?.code === 'no-permission' ? '授权失效' : '失败');
+    const noVault = failure?.code === 'no-folder', dl = noVault ? images : [note, ...images];
+    card.step(3, 'bad', noVault ? '无 Obsidian' : failure?.code === 'no-permission' ? '授权失效' : '失败');
     let got = 0;
     for (const f of dl) got += (await send({ type: 'download', folder, files: [f] }).catch(() => ({ ids: [] }))).ids?.length ?? 0;
-    const reason = noVault ? '无 Obsidian' : begin?.error ?? '后台无响应';
+    const reason = noVault ? '无 Obsidian' : failure?.error ?? '后台无响应';
     card.finish(false, got ? `无法保存，${noVault ? '长图' : '文件'}已下载` : '收藏失败', { icon: got ? '⬇️' : '⚠️', head: title,
       sub: [got ? `${reason}，已下载 ${got} 个文件到 Chrome` : reason, ...warns].join('；') },
-      begin?.code ? { label: noVault ? '去设置' : '去授权', run: () => void send({ type: 'options' }) } : undefined, 0, pdf);
+      failure?.code ? { label: noVault ? '去设置' : '去授权', run: () => void send({ type: 'options' }) } : undefined, 0, pdf);
   } catch (e) {
     console.error('[chatgpt-clipper] 整段收藏中断', e);
     card.finish(false, '整段收藏失败', { icon: '⚠️', head: title || document.title,
