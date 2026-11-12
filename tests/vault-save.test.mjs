@@ -103,6 +103,39 @@ function storage() {
 
 const files = text => [{ name: 'note.md', data: `${text}_MD` }, { name: 'answer.png', data: `${text}_PNG` }];
 
+for (const rename of [true, false]) {
+  for (const missing of ['PNG', 'MD']) {
+    test(`已有收藏缺 ${missing}（${rename ? '改标题换目录' : '原地更新'}）：拒绝更新，旧目录和索引全部保留`, async t => {
+      const s = storage(), old = '2026-11-01 旧标题';
+      const folder = rename ? '2026-11-12 新标题' : old;
+      const partial = missing === 'PNG' ? [{ name: 'new.md', data: 'NEW_MD' }] : [{ name: 'answer.png', data: 'NEW_PNG' }];
+      await saveCollection(s.dir, 'A', old, files('OLD'));
+      let error;
+      try { await saveCollection(s.dir, 'A', folder, partial); }
+      catch (e) { error = e; }
+      const actual = Object.fromEntries(await Promise.all([...s.dirs.keys()].map(async name => [name, await s.read(name)])));
+      t.diagnostic(JSON.stringify({ directories: actual, saved: await getSaved('A'), error: error?.message }));
+      assert.deepEqual(actual, { [old]: { 'note.md': 'OLD_MD', 'answer.png': 'OLD_PNG' } });
+      assert.deepEqual(await getSaved('A'), { folder: old, note: 'note.md' });
+      assert.match(error?.message ?? '', /长图或笔记没有生成完整/);
+      assert.equal(s.values.has('pending-write'), false);
+      // 拒绝本次更新不应堵住队列；文件齐全后仍能正常更新。
+      const retry = await saveCollection(s.dir, 'A', folder, files('RETRY'));
+      assert.deepEqual(await s.read(retry.name), { 'note.md': 'RETRY_MD', 'answer.png': 'RETRY_PNG' });
+    });
+  }
+}
+
+for (const missing of ['PNG', 'MD']) {
+  test(`新收藏缺 ${missing}：仍按原行为保存本次已有文件和索引`, async () => {
+    const s = storage(), name = '2026-11-12 新收藏';
+    const partial = missing === 'PNG' ? [files('NEW')[0]] : [files('NEW')[1]];
+    assert.deepEqual(await saveCollection(s.dir, 'A', name, partial), { name, updated: false });
+    assert.deepEqual(await s.read(name), Object.fromEntries(partial.map(f => [f.name, f.data])));
+    assert.deepEqual(await getSaved('A'), { folder: name, note: missing === 'PNG' ? 'note.md' : undefined });
+  });
+}
+
 test('跨标签页同时收藏同名的两条回答：目录和索引各自独立', async () => {
   const { dir, read } = storage();
   const [a, b] = await Promise.all([

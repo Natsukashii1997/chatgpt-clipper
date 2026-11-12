@@ -149,6 +149,9 @@ async function saveOne(dir: FileSystemDirectoryHandle, id: string, folder: strin
   Promise<{ name: string; updated?: boolean; moved?: boolean }> {
   const prev = await getSaved(id), md = files.find(f => f.name.endsWith('.md')), note = md?.name;
   if (prev && !(await hasFolder(dir, prev.folder))) return { name: prev.folder, moved: true };
+  // 已有收藏只接受完整更新；生成失败的部分结果交给调用方原有的失败提示和下载兜底。
+  if (prev && (!md || !files.some(f => f.name === 'answer.png')))
+    throw new Error('本次长图或笔记没有生成完整，旧收藏未更新');
   let name = prev?.folder ?? await newFolder(dir, folder);
   if (prev && titlePart(prev.folder) !== titlePart(folder) && await onlyOurs(await dir.getDirectoryHandle(prev.folder), prev.note))
     name = await newFolder(dir, `${prev.folder.match(DATE)?.[0] ?? ''} ${titlePart(folder)}`.trim());
