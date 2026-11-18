@@ -24,6 +24,8 @@ const GROWING_URL = 'https://chatgpt.com/c/growing', TICKING_URL = 'https://chat
 const BROKEN_FIXTURE = FIXTURE.replaceAll(':assistant"', ':assistant-x"');
 // Claude Code 的会话页：同一份回答标记，但不是聊天对话
 const CLAUDE_CODE_URL = 'https://claude.ai/code/session_fixture';
+// 生成图片的对话：回答没有「…:assistant」标记（2026-11-18 侦察）
+const IMAGE_ANSWER_URL = 'https://chatgpt.com/c/image', IMAGE_ANSWER_FIXTURE = fs.readFileSync(path.join(ROOT, 'tests/fixtures/image-answer.html'), 'utf8');
 // 多轮对话，虚拟列表（整段收藏用）
 const THREAD_FIXTURE = fs.readFileSync(path.join(ROOT, 'tests/fixtures/claude-thread.html'), 'utf8'), THREAD_URL = 'https://claude.ai/chat/thread';
 // 第十节的外部资源：字体与页面同源；图片跨域且不带 CORS 头，和真实页面的 images.openai.com 一样内容脚本读不到
@@ -58,6 +60,7 @@ before(async () => {
     if (url.startsWith(CLAUDE_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: CLAUDE_FIXTURE });
     if (url.startsWith(THREAD_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: THREAD_FIXTURE });
     if (url.startsWith(CLAUDE_CODE_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: CLAUDE_FIXTURE });
+    if (url.startsWith(IMAGE_ANSWER_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: IMAGE_ANSWER_FIXTURE });
     // 模拟 Claude 改版：回答换了标记，插件认不出
     if (url.startsWith(BROKEN_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: BROKEN_FIXTURE });
     if (url.startsWith(GROWING_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8',
@@ -659,7 +662,7 @@ describe('Claude 网页版', () => {
     await toast.getByText('✓ 已复制。到 Claude Code 里 chatgpt-clipper 项目的会话粘贴发送。').waitFor({ timeout: 2_000 });
     const req = await clipboard(broken);
     assert.match(req, /^chatgpt-clipper 认不出 ChatGPT 的回答了，请重新侦察对话页（docs\/recon\/），改 src\/lib\/adapter\.ts。\n- 时间：\d{4}-\d\d-\d\d \d\d:\d\d（北京时间）\n- 页面：chatgpt\.com 对话页，插件版本 \d+\.\d+\.\d+\n/, req);
-    assert.match(req, /回答选择器 \[data-chatgpt-search-unit-key\$=":assistant"\]：0 个\n- 提问选择器 \[data-chatgpt-search-unit-key\$=":user"\]：2 个/, req);
+    assert.match(req, /回答选择器 \[data-chatgpt-search-unit-key\$=":assistant"\], \[data-response-body\]\[data-chatgpt-search-message-ids\]:not\(\[data-chatgpt-search-unit-key\$=":assistant"\] \*\)：0 个\n- 提问选择器 \[data-chatgpt-search-unit-key\$=":user"\]：2 个/, req);
     assert.match(req, /data-chatgpt-search-unit-key ×4/, req);
     assert.match(req, /界面标记：.*data-chatgpt-search-unit-key="fallback-turn-N:N:assistant-x"/, '改掉的回答标记要写进修复请求');
     for (const s of ['周度工作节奏', '简短一点', '周一计划', 'fixture', 'broken']) assert.ok(!req.includes(s), `修复请求里不该有对话内容或对话编号：${s}`);
@@ -675,6 +678,63 @@ describe('Claude 网页版', () => {
     await broken.locator('clipper-ribbon').first().waitFor({ state: 'attached', timeout: 3_000 });
     await toast.waitFor({ state: 'detached', timeout: 2_000 });
     await Promise.all([broken, slow, thinking, growing, ticking].map(pg => pg.close()));
+  });
+});
+
+// 2026-11-18 常浩的修复请求：生成图片的对话里回答没有「…:assistant」标记（docs/recon/2026-11-18-生成图片回答侦察记录.md）
+describe('ChatGPT 生成图片的回答', () => {
+  const BODY = '[data-response-body][data-chatgpt-search-message-ids]';
+  let ip, r;
+
+  before(async () => {
+    const sw = ctx.serviceWorkers()[0];
+    await sw.evaluate(async () => {
+      const root = await navigator.storage.getDirectory();
+      for await (const [n] of root.entries()) await root.removeEntry(n, { recursive: true });
+    });
+    await setVault(sw);
+    ip = await ctx.newPage();
+    await ip.goto(IMAGE_ANSWER_URL);
+    await ip.locator(`#second clipper-ribbon`).waitFor({ state: 'attached' });
+    await ip.locator('#second img').evaluate(img => img.complete && img.naturalWidth ? null : new Promise(ok => img.addEventListener('load', ok, { once: true })));
+    // 基准：把图上的「编辑」「分享」按钮藏起来后的回答
+    await ip.addStyleTag({ content: '.bar-e5f6 button{visibility:hidden!important}' });
+    const box = await ip.locator('#second').boundingBox();
+    const baseline = await ip.locator('#second').screenshot();
+    await ip.evaluate(() => document.querySelector('style:last-of-type').remove());
+    const card = await (await collectCard(ip, '#second clipper-ribbon button')).innerText();
+    const files = await sw.evaluate(async () => {
+      const out = {};
+      for await (const [, h] of (await navigator.storage.getDirectory()).entries())
+        for await (const [f, fh] of h.entries()) {
+          const file = await fh.getFile();
+          out[f.endsWith('.md') ? 'note' : f] = f.endsWith('.md') ? await file.text() : [...new Uint8Array(await file.arrayBuffer())];
+        }
+      return out;
+    });
+    r = { box, baseline, card, note: files.note, png: Buffer.from(files['answer.png'] ?? []) };
+  });
+
+  after(() => ip?.close());
+
+  test('两条只有图片的回答都挂上丝带，不提醒改版；收藏后写进 Vault', async () => {
+    assert.equal(await ip.locator(`${BODY} clipper-ribbon`).count(), 2);
+    assert.equal(await ip.locator('clipper-dock .toast').count(), 0);
+    assert.match(r.card, /^已收藏\n/, r.card);
+  });
+
+  test('长图里有生成的图片（blob: 地址），不画图上的「编辑」「分享」按钮：和藏起按钮的真实渲染逐像素比', async () => {
+    assert.equal(r.png.readUInt32BE(16), Math.round(r.box.width));
+    const { ratio, sizes } = await pixelDiff(r.png, r.baseline);
+    assert.ok(ratio < MAX_DIFF_RATIO, `不同像素占 ${(ratio * 100).toFixed(2)}%，尺寸 ${sizes}`);
+  });
+
+  test('笔记：提问取自同一轮的「换成蓝色」，正文写图片说明，不收按钮文字', () => {
+    const n = r.note;
+    assert.match(n, /换成蓝色/);
+    assert.ok(!n.includes('橙色'), '不该取到上一轮的提问');
+    assert.match(n, /已生成图像 1/);
+    for (const s of ['编辑', '分享', 'ChatGPT 说：']) assert.ok(!n.includes(s), `笔记里不该有「${s}」`);
   });
 });
 
