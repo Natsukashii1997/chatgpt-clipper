@@ -11,7 +11,7 @@ const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'BUTTON', 'svg'
 
 /** 把一条回答转成 Markdown 正文。exclude：插件自己挂在回答里的节点；code：readCodeEditors 读全的长代码 */
 export function answerToMarkdown(answer: HTMLElement, opts: { exclude?: string; code?: Map<Element, CodeRead> } = {}): string {
-  const skip = (el: Element) => SKIP.has(el.tagName) || el.matches(MD.skip) || (!!opts.exclude && el.matches(opts.exclude)) || hidden(el);
+  const skip = (el: Element) => (SKIP.has(el.tagName) && !(el.tagName === 'BUTTON' && el.matches(MD.keepButton))) || el.matches(MD.skip) || (!!opts.exclude && el.matches(opts.exclude)) || hidden(el);
   const isBlock = (el: Element) => BLOCK.has(el.tagName) || el.matches(MD.katexDisplay);
   const kids = (el: Element) => [...el.children].filter(c => !skip(c));
 

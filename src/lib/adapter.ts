@@ -6,12 +6,18 @@ export const SITE = CLAUDE ? 'claude' : 'chatgpt';
 /** 匹配不到任何元素：某站没有的那类内容 */
 const NONE = ':not(*)';
 
-/** 每条助手回答。ChatGPT：data-chatgpt-search-unit-key="fallback-turn-N:K:assistant"；Claude：整块回答（Artifact 卡片在正文 Prose 外面） */
-export const ANSWER_SELECTOR = CLAUDE ? '[data-testid="assistant-message"]' : '[data-chatgpt-search-unit-key$=":assistant"]';
+/** 每条助手回答。ChatGPT：data-chatgpt-search-unit-key="fallback-turn-N:K:assistant"；
+ *  生成图片的回答没有这个标记，整条回答是带消息编号的 data-response-body（普通回答里也有 data-response-body，但不带消息编号，
+ *  docs/recon/2026-11-18-生成图片回答侦察记录.md）；Claude：整块回答（Artifact 卡片在正文 Prose 外面） */
+const CHATGPT_ANSWER = '[data-chatgpt-search-unit-key$=":assistant"]';
+export const ANSWER_SELECTOR = CLAUDE ? '[data-testid="assistant-message"]'
+  : `${CHATGPT_ANSWER}, [data-response-body][data-chatgpt-search-message-ids]:not(${CHATGPT_ANSWER} *)`;
 const USER_SELECTOR = CLAUDE ? '[data-testid="user-message"]' : '[data-chatgpt-search-unit-key$=":user"]';
 /** 回答里不属于正文、又占位置的界面：Claude 的思考过程（含联网搜索过程）那一行（用户 2026-11-03 定不收）、底部按钮和时间、读屏标题。
+ *  ChatGPT：生成图片上叠着的「编辑」「分享」等按钮（图片本身也包在一个按钮里，要留）。
  *  长图、笔记、指纹都不要；长图去掉后按剩下的内容重新量高 */
-export const NOISE = CLAUDE ? '[data-cds="TurnStatus"], :has(> [data-testid="message-actions"]), h3[data-find-omitted]' : '';
+export const NOISE = CLAUDE ? '[data-cds="TurnStatus"], :has(> [data-testid="message-actions"]), h3[data-find-omitted]'
+  : '[data-testid="generated-image-gallery"] button:not([data-testid="generated-image-preview"])';
 
 /** 对话页：ChatGPT /c/…（含 /g/…/c/…），Claude /chat/…。改版自检只在这里查丝带挂没挂上 */
 const CHAT_PATH = CLAUDE ? /^\/chat\/[^/]/ : /\/c\/[^/]/;
@@ -93,7 +99,7 @@ export function selectedBlocks(el: HTMLElement, r: Range): HTMLElement[] {
 }
 
 export function answerKey(el: HTMLElement): string {
-  return el.dataset.chatgptSearchUnitKey ?? el.dataset.turnKey ?? '';
+  return el.dataset.chatgptSearchUnitKey ?? el.dataset.turnKey ?? el.dataset.chatgptSearchMessageIds ?? '';
 }
 
 /** 回答的标题：第一个看得见的标题，没有就返回空。跳过「ChatGPT 说：」这类读屏专用的隐藏标题 */
@@ -150,6 +156,8 @@ export function threadItems(): ThreadItem[] {
 const CHATGPT_MD = {
   /** 读屏专用标题、ChatGPT 复制时排除的元素 */
   skip: '[data-conversation-role], [data-markdown-copy="exclude"], [data-d-component="favicon"]',
+  /** 按钮一律不转，只有这些例外：生成图片包在预览按钮里（2026-11-18 侦察） */
+  keepButton: '[data-testid="generated-image-preview"]',
   /** 文档块（writing block）和它自带的 Markdown 原文 */
   widget: '[data-client-defined-widget]',
   sourceAttr: 'data-markdown-copy-text',
@@ -192,7 +200,7 @@ export const MD: typeof CHATGPT_MD = CLAUDE ? {
   ...CHATGPT_MD,
   /** 读屏标题、思考过程行、按钮行；代码块的语言名和复制按钮（语言看 code 的类） */
   skip: `${NOISE}, [role="group"] > [data-find-omitted], [data-testid="code-block-copy"]`,
-  widget: NONE, pressable: NONE, citation: NONE, learning: NONE, codeBlock: NONE, codeEditor: NONE,
+  widget: NONE, pressable: NONE, citation: NONE, learning: NONE, codeBlock: NONE, codeEditor: NONE, keepButton: NONE,
   artifact: '[data-cds="Card"][data-file-row-card]',
   artifactTitle: '[data-testid="frame-card-open"]',
 } : CHATGPT_MD;

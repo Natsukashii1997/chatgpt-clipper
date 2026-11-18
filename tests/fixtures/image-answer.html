@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>测试页：仿生成图片的回答</title>
+<!-- 自动测试用的固定页面：仿 ChatGPT「生成图片」对话的结构（docs/recon/2026-11-18-生成图片回答侦察记录.md），内容是编的，不含任何私人对话。
+     这类回答没有 data-chatgpt-search-unit-key="…:assistant"，整条回答是 [data-response-body][data-chatgpt-search-message-ids]；
+     图片是页面脚本生成的 blob: 地址（真实页面同样是 blob:https://chatgpt.com/…）；图上叠着「编辑」「分享」按钮。
+     两问两答，每轮问答在同一个 data-turn-key 里；外层 overflow-x:clip 容器给回答左侧留 20px（同 card-answer.html）。 -->
+<style>
+*,::before,::after{box-sizing:border-box;border:0 solid #e5e5e5}
+html,body{margin:0}
+body{font:16px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",sans-serif;color:#0d0d0d;background:#fff}
+.clip{max-width:808px;margin:0 auto;padding:0 20px;overflow-x:clip}
+.thread{max-width:768px;margin:0 auto;padding:24px 0 120px}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+.user-bubble{margin-left:auto;width:fit-content;max-width:70%;background:#f0f0f0;border-radius:18px;padding:8px 16px;margin-bottom:16px}
+.disclosure{font-size:14px;color:#8f8f8f;background:none;padding:0;margin:0 0 8px}
+.gallery-a1b2{width:400px;margin:0 0 32px}
+.tile-c3d4{position:relative;border-radius:16px;overflow:hidden}
+.tile-c3d4 > button{display:block;padding:0;background:none;width:100%}
+.tile-c3d4 img{display:block;width:100%;height:auto}
+.bar-e5f6{position:absolute;left:0;right:0;bottom:0;height:56px;display:flex;justify-content:space-between;align-items:center;padding:0 12px}
+.bar-e5f6 button{background:rgba(0,0,0,.6);color:#fff;border-radius:999px;padding:4px 12px;font-size:14px}
+</style>
+</head>
+<body>
+<div class="clip"><main class="thread">
+  <div data-turn-key="6b000000-0000-8000-8000-000000000001"><div data-content-search-turn-key="6b000000-0000-8000-8000-000000000001"><div data-talvt-turn-state="complete"><div data-spacing="activity">
+    <div>
+      <h4 class="sr-only" data-conversation-role="user">你说：</h4>
+      <div data-chatgpt-search-unit-key="6b000000-0000-8000-8000-000000000001:0:user" data-chatgpt-search-message-ids="6b000000-0000-8000-8000-0000000000a1">
+        <div data-content-search-unit-key="6b000000-0000-8000-8000-000000000001:0:user"><div data-user-message-bubble="true" class="user-bubble">画一只橙色的圆形机器人</div></div>
+      </div>
+    </div>
+    <div><span data-chatgpt-agent-turn-start=""></span><button class="disclosure" data-turn-disclosure-button="">已处理 1m</button></div>
+    <div>
+      <h4 class="sr-only" data-conversation-role="assistant">ChatGPT 说：</h4>
+      <div id="first" data-response-body="6b000000-0000-8000-8000-0000000000b1" data-chatgpt-search-message-ids="6b000000-0000-8000-8000-0000000000b1">
+        <div><div data-testid="generated-image-gallery" class="gallery-a1b2"><div><div class="tile-c3d4" data-web-image-tile="true">
+          <button data-testid="generated-image-preview" aria-label="已生成图像 1"><img alt="已生成图像 1" data-paint="#d9480f" width="400" height="300"></button>
+          <div class="bar-e5f6"><button aria-label="编辑生成的图像 1">编辑</button><button aria-label="分享生成的图像 1">分享</button></div>
+        </div></div></div></div>
+      </div>
+    </div>
+  </div></div></div></div>
+
+  <div data-turn-key="6b000000-0000-8000-8000-000000000002"><div data-content-search-turn-key="6b000000-0000-8000-8000-000000000002"><div data-talvt-turn-state="complete"><div data-spacing="activity">
+    <div>
+      <h4 class="sr-only" data-conversation-role="user">你说：</h4>
+      <div data-chatgpt-search-unit-key="6b000000-0000-8000-8000-000000000002:0:user" data-chatgpt-search-message-ids="6b000000-0000-8000-8000-0000000000a2">
+        <div data-content-search-unit-key="6b000000-0000-8000-8000-000000000002:0:user"><div data-user-message-bubble="true" class="user-bubble">换成蓝色</div></div>
+      </div>
+    </div>
+    <div><span data-chatgpt-agent-turn-start=""></span><button class="disclosure" data-turn-disclosure-button="">已处理 40s</button></div>
+    <div>
+      <h4 class="sr-only" data-conversation-role="assistant">ChatGPT 说：</h4>
+      <div id="second" data-response-body="6b000000-0000-8000-8000-0000000000b2" data-chatgpt-search-message-ids="6b000000-0000-8000-8000-0000000000b2">
+        <div><div data-testid="generated-image-gallery" class="gallery-a1b2"><div><div class="tile-c3d4" data-web-image-tile="true">
+          <button data-testid="generated-image-preview" aria-label="已生成图像 1"><img alt="已生成图像 1" data-paint="#1c7ed6" width="400" height="300"></button>
+          <div class="bar-e5f6"><button aria-label="编辑生成的图像 1">编辑</button><button aria-label="分享生成的图像 1">分享</button></div>
+        </div></div></div></div>
+      </div>
+    </div>
+  </div></div></div></div>
+</main></div>
+<script>
+// 真实页面的生成图是 blob: 地址：这里用 canvas 画一张纯色图，转成 blob: 地址填进去
+for (const img of document.querySelectorAll('img[data-paint]')) {
+  const c = document.createElement('canvas');
+  c.width = 400; c.height = 300;
+  const g = c.getContext('2d');
+  g.fillStyle = img.dataset.paint; g.fillRect(0, 0, 400, 300);
+  g.fillStyle = '#fff'; g.beginPath(); g.arc(200, 150, 80, 0, Math.PI * 2); g.fill();
+  c.toBlob(b => { img.src = URL.createObjectURL(b); }, 'image/png');
+}
+</script>
+</body>
+</html>
