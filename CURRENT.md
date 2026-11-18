@@ -2,10 +2,10 @@
 
 当前阶段目标：一键导出 PDF 给 AI（FR-15），分三批：① 删「为什么存」② 导出 PDF ③ 常浩真实 Chrome 验收。（2026-11-10 常浩确认）已完成，2026-11-11 合并（#5）。
 
-更新：2026-11-18。生成图片的回答认不出（#8）已修好，常浩真实 Chrome 试过，PR 待合并。之前的 FR-15、FR-9 C 版已合并（#5、#6）。
+更新：2026-11-18。生成图片的回答认不出（#8）已修好，常浩真实 Chrome 试过，PR #9 已合并（`ea687b9`），主目录已拉齐、已 `npm run zip`。下一步：无，等常浩提新需求。之前的 FR-15、FR-9 C 版已合并（#5、#6）。
 
 
-## 生成图片的回答认不出：重新侦察，选择器补上这类回答（2026-11-18，Claude，常浩贴来插件复制的修复请求，要求重新侦察、改 adapter.ts；常浩刷新插件试过后说「试过了，提交」；已提交、开 PR，无需发布）
+## 生成图片的回答认不出：重新侦察，选择器补上这类回答（2026-11-18，Claude，常浩贴来插件复制的修复请求，要求重新侦察、改 adapter.ts；常浩刷新插件试过后说「试过了，提交」；已合并 PR #9（`ea687b9`）、无需发布）
 
 - 时间：开工 `2026-11-18 21:44`（约）。★ 来由：常浩在一个 chatgpt.com 对话页看到「ChatGPT 改版了」提醒，修复请求写回答选择器 0 个、提问 2 个，界面标记里有 `generated-image-gallery`。
 - 改了哪些文件：`src/lib/adapter.ts`（`ANSWER_SELECTOR` 加上「带消息编号、不在 `…:assistant` 里面的 `data-response-body`」；ChatGPT 的 `NOISE` 加上生成图片上的「编辑」「分享」按钮；`answerKey` 没有单元标记时用消息编号；`MD.keepButton`：生成图片的预览按钮）；`src/lib/markdown.ts`（按钮一律不转，`MD.keepButton` 例外，图片说明才进得了笔记）；`tests/fixtures/image-answer.html`（新：仿生成图片对话，两问两答，图片是 blob: 地址，图上叠按钮）；`tests/snapshot.test.mjs`（新 `describe('ChatGPT 生成图片的回答')` 3 个用例；改版自检用例里修复请求的选择器那行跟着改）；`docs/recon/2026-11-18-生成图片回答侦察记录.md`（新）；`docs/LESSONS.md`（L-23）。
