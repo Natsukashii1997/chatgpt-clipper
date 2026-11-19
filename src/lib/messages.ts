@@ -12,9 +12,10 @@ export type Request =
   | { type: 'options' }
   | { type: 'image'; url: string }
   // 整段收藏（FR-13）分批写：开头定文件夹，每张长图一条消息（一起发可能超过消息大小上限），最后写笔记
+  | { type: 'thread-cancel'; job: string }
   | { type: 'thread-begin'; id: string; folder: string }
-  | { type: 'thread-file'; folder: string; file: DownloadFile }
-  | { type: 'thread-end'; id: string; folder: string; note: DownloadFile; images: string[] }
+  | { type: 'thread-file'; folder: string; job: string; file: DownloadFile }
+  | { type: 'thread-end'; id: string; folder: string; job: string; note: DownloadFile; images: string[] }
   // 导出 PDF（FR-15）：排好的 HTML 可能很大（图片都内嵌了），分段送到后台；最后一条 pdf 让后台打印、存进「下载」。
   // name 文件名（不带 .pdf），width 回答排版宽度（按 A4 版心缩放）
   | { type: 'pdf-part'; job: string; text: string }
@@ -24,7 +25,7 @@ export type FailCode = 'no-folder' | 'no-permission';
 /** save 的结果：updated 覆盖了这条回答原来的收藏；folder 整段收藏写到的文件夹名；moved 收藏过但原文件夹已不在（被整理走了），没有重写；open 在 Obsidian 里打开笔记的链接（没设置位置时为空）。saved：已收藏的指纹。pages：导出的 PDF 有几页。
  *  image 的结果：dataUrl 是取到的图片 */
 export type Response =
-  | { ok: true; ids?: number[]; path?: string; folder?: string; updated?: boolean; moved?: boolean; open?: string; saved?: string[]; dataUrl?: string; pages?: number }
+  | { ok: true; ids?: number[]; path?: string; folder?: string; job?: string; updated?: boolean; moved?: boolean; open?: string; saved?: string[]; dataUrl?: string; pages?: number }
   | { ok: false; error: string; code?: FailCode };
 
 /** 下载根目录下的子文件夹，避免和用户的其他下载混在一起 */
