@@ -201,6 +201,7 @@
 - 根因：Playwright 用 `--load-extension` 装的插件，调 `chrome.runtime.reload()` 后只卸载、不重新加载：服务进程变成 0 个，刷新旧页面、新开页面都没有内容脚本。真实 Chrome 里重新加载插件后刷新页面会连上新插件，这一步测试环境测不了。
 - 正确做法：测「插件更新过、页面连着旧插件」只断言旧页面上的表现（提醒出现、点了页面重新加载、旧提醒没了），「刷新后连上新插件」留给真实 Chrome 验收；这类用例放在测试文件最后，免得后面的用例没有插件可用。
 - 证据：会话临时目录的 `reload-probe.mjs` 实验：重载前服务进程 1 个，之后 1、3、6 秒都是 0 个，刷新页面和新开页面丝带都是 0 条（2026-11-11）。
+- 补充（2026-11-19）：扩展页的「重新加载」（`chrome://extensions` 里调 `chrome.developerPrivate.reload`）同样起不来；能真重载的做法：持久浏览器加 `--enable-unsafe-extension-debugging` 和 `--remote-debugging-port`，`chromium.connectOverCDP` 拿浏览器级 CDP，调 `Extensions.loadUnpacked` 重新装同一目录（同一个 id），之后新开页面丝带照常挂上，旧页面显示「插件已更新」提醒。非持久浏览器里插件一开始就起不来，不能用。证据：`~/Library/Application Support/chatgpt-clipper/evidence/2026-11-19-reinject-probe/`（`probe5.mjs`、`结果.txt`）。
 - 升级：〔提醒〕不升级（2026-11-19，积压清单组 16）：只是测试工具的限制，已靠用例顺序（这类用例放文件最后）绕开。此前：〔提醒〕未升级。（2026-11-19 补层级）
 
 ## L-22 只看 DOM 增删判断「页面还在变」，漏掉只改文字的变化（2026-11-11）
