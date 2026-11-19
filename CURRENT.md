@@ -2,8 +2,19 @@
 
 当前阶段目标：一键导出 PDF 给 AI（FR-15），分三批：① 删「为什么存」② 导出 PDF ③ 常浩真实 Chrome 验收。（2026-11-10 常浩确认）已完成，2026-11-11 合并（#5）。
 
-更新：2026-11-18。生成图片的回答认不出（#8）已修好，常浩真实 Chrome 试过，PR #9 已合并（`ea687b9`），主目录已拉齐、已 `npm run zip`。下一步：无，等常浩提新需求。之前的 FR-15、FR-9 C 版已合并（#5、#6）。
+更新：2026-11-19。FR-9 改成「插件更新后给已开页面补装脚本」（#12，常浩选「只补装」、同意加 scripting 和两个站的 host 权限），PR 待合并。下一步：常浩合并后，在真实 Chrome 里重新加载插件、不刷新已开的 ChatGPT 页面点丝带收藏一次。之前的生成图片修复（#9）、FR-15、FR-9 C 版已合并。
 
+
+## 插件更新后给已开页面补装脚本，不用刷新（FR-9「只补装」）（2026-11-19，Claude，常浩选「换个改法（只补装）」，又同意加 chatgpt.com、claude.ai 两个站的 host 权限；已提交、PR 待合并，未发布）
+
+- 时间：开工 `2026-11-19 16:07`。★ 来由：积压清单组 7（全局 G-35），碰到 FR-9 已定内容，按第 15 节问过（#12）：常浩选「只补装，补装失败仍提醒刷新，第一次升级的两条丝带接受」。
+- 改了哪些文件：`src/entrypoints/background.ts`（`runtime.onInstalled` 安装、更新时按 `PAGES` 查已开标签页，`scripting.executeScript` 补装 `content-scripts/content.js`，失败的只记日志）；`src/entrypoints/content.ts`（`main(ctx)`：新的一份启动时 WXT 让旧的作废，旧的断开监听、清计时、收起自己的 `[data-clipper-ui]`；选区监听改用 `ctx.addEventListener`）；`src/lib/messages.ts`（`PAGES` 一处定义，内容脚本和后台共用）；`wxt.config.ts`（加 `scripting` 和两个站的 host 权限，注释写明来由）；`tests/snapshot.test.mjs`（浏览器带真重载开关；新用例「插件更新或重新加载后，已开的页面不用刷新…」；原兜底用例改名、取最新服务进程）；`docs/PRD.md` FR-9 末句；`docs/LESSONS.md` L-13、L-21 补充，新增 L-24；`README.md` 权限表；`public/安装说明.txt`「更新」一段。
+- 测试：`node --test tests/*.test.mjs` 原样结果 `ℹ pass 55` / `ℹ fail 0`，连跑三遍一致（证据目录 `2026-11-19-fr9-reinject/full-1-summary.txt`、`full-2.txt`，文档定稿后最终版 `full-3-final.txt`）；`npm run compile` 无报错；`node scripts/check-rules.mjs` 通过。反向验证：旧代码下新用例报红「补装后不该再提醒」（`red-old-code.txt`）；只加 scripting 不加 host 权限仍红（`green-new-code.txt`）；去掉让位逻辑报红（同一条回答两套丝带，`red-without-stepdown.txt`）。
+- 验证：Playwright Chromium（无头），浏览器级 CDP `Extensions.loadUnpacked` 真重载（同扩展页「重新加载」）；没在常浩的真实 Chrome 里试。
+- 截图：无（界面没变，只是不再出提醒）。
+- 发布与回读：未发布；合并后 `npm run zip`。
+- 与授权不一致之处、遗留问题、范围外发现：① 常浩原批只说加 `scripting`，做的时候发现补装还要两个站的 host 权限（L-24），停下单独问过，常浩回「加两个站权限」。② 从本版之前的版本第一次升上来那一次，旧脚本不认让位，已开页面可能两条丝带、旧的还会提醒刷新，刷新一次后正常（常浩选的就是不处理这一情形）。③ 顺手改：README 权限表原来写「不要 debugger」、只列 chatgpt.com，已和现状对齐。④ 范围外：AGENTS「分工」还写「范围外的问题记进交接，不顺手修」，与全局第 3 节「代码库归你」不一致（骨架 0.3.1 已改），没动。⑤ 本项目没有 `docs/DECIDED.md`，要不要建由常浩定。
+- 本轮新坑：L-24。
 
 ## 生成图片的回答认不出：重新侦察，选择器补上这类回答（2026-11-18，Claude，常浩贴来插件复制的修复请求，要求重新侦察、改 adapter.ts；常浩刷新插件试过后说「试过了，提交」；已合并 PR #9（`ea687b9`）、无需发布）
 

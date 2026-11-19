@@ -27,10 +27,12 @@ npm run compile                   # 类型检查
 |---|---|
 | `downloads` | 写不进 Vault 时（没选文件夹、授权失效、写入出错）退回浏览器下载，把笔记和长图存到下载目录的 `chatgpt-clipper/<日期> <标题>/` 子文件夹 |
 | `https://images.openai.com/*`、`https://*.oaiusercontent.com/*` | 长图里画回答中的图片（搜索图、生成图、上传图）。这两个域名不给页面 CORS 头，内容脚本读不到，由后台取回已显示的图片转成内嵌数据；只取图片，不发送任何内容 |
+| `debugger` | 一键导出 PDF（FR-15，常浩 2026-11-10 确认）：只接到插件自己开的打印页上，用 `Page.printToPDF` 打印，导完马上断开；导出那一两秒浏览器顶部会出现「已开始调试此浏览器」提示条 |
+| `scripting`、`https://chatgpt.com/*`、`https://claude.ai/*` | 插件安装、更新、重新加载后，给已开的这两个站的页面补装内容脚本，不用刷新页面（FR-9，常浩 2026-11-19 同意）。内容脚本的 `matches` 不算 host 权限，没有这两项补装不了（L-24）；后台不向这两个站发请求 |
 | 设置页（`options_ui`，不需要权限） | 用 File System Access API 选一次 Vault 里的目标文件夹，目录句柄存在扩展自己的 IndexedDB；授权失效时在这里重新授权 |
-| 内容脚本 `matches: https://chatgpt.com/*` | 只在 ChatGPT 页面上挂「收藏」按钮、读取用户点选的那条回答 |
+| 内容脚本 `matches: https://chatgpt.com/*`、`https://claude.ai/*` | 只在 ChatGPT、Claude 页面上挂「收藏」丝带、读取用户点选的那条回答 |
 
-不要 `debugger`、`<all_urls>`、`activeTab`、`storage`、`cookies`：长图用离线快照栅格化（方案 C），不需要截屏；不读写 cookie、token、localStorage。
+不要 `<all_urls>`、`activeTab`、`storage`、`cookies`：长图用离线快照栅格化（方案 C），不需要截屏；不读写 cookie、token、localStorage。
 
 ## 代码结构
 

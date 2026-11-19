@@ -47,7 +47,8 @@ before(async () => {
     viewport: { width: 1400, height: 900 },
     deviceScaleFactor: 1,
     downloadsPath: path.join(dir, 'downloads'),
-    args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`],
+    // 后两项给「插件更新后补装」的用例真重载插件用（浏览器级 CDP 的 Extensions.loadUnpacked，L-21 补充）；端口随机，写在 profile/DevToolsActivePort
+    args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, '--enable-unsafe-extension-debugging', '--remote-debugging-port=0'],
   });
   // 测试里要读剪贴板核对长图（FR-14）；用的是 Mac 的系统剪贴板，跑完会被清空（L-17）
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
@@ -1172,9 +1173,38 @@ describe('导出 PDF', () => {
   });
 });
 
-// 放在最后：会重新加载插件
-test('插件刷新后没刷新页面：右下角提醒刷新、点了就重新加载页面；收藏提示「刷新这个页面」，不一直卡在入库', async () => {
-  await ctx.serviceWorkers()[0].evaluate(() => chrome.runtime.reload()).catch(() => {});
+// 后台服务进程：插件重新加载过就有新旧两个，取最新的
+const worker = () => ctx.serviceWorkers().at(-1);
+
+// 放在最后两条：会重新加载插件
+test('插件更新或重新加载后，已开的页面不用刷新：补装新脚本，每条回答只有一套丝带、不提醒刷新、点丝带能收藏（FR-9，2026-11-19 常浩选「只补装」）', async () => {
+  await page.goto(URL);
+  await page.locator(`${ANSWER} clipper-ribbon`).waitFor({ state: 'attached' });
+  const answers = await page.locator('[data-chatgpt-search-unit-key$=":assistant"]').count();
+  // 重载前选好 Vault 文件夹：重载后点丝带要能真正写进去（设置也不因重载丢失）
+  await setVault(worker());
+  // 真重载：同扩展页的「重新加载」。chrome.runtime.reload() 在 Playwright 里重载后插件起不来（L-21）
+  const port = fs.readFileSync(path.join(dir, 'profile', 'DevToolsActivePort'), 'utf8').split('\n')[0];
+  const cdp = await (await chromium.connectOverCDP(`http://127.0.0.1:${port}`)).newBrowserCDPSession();
+  const fresh = ctx.waitForEvent('serviceworker', { timeout: 10_000 });
+  await cdp.send('Extensions.loadUnpacked', { path: EXT });
+  await fresh;
+  await new Promise(r => setTimeout(r, 1500));
+  // 页面一有变动，连着旧插件的脚本就会提醒刷新；补装后旧脚本已让位，不该提醒
+  await page.locator('main').evaluate(m => m.append(document.createElement('p')));
+  await new Promise(r => setTimeout(r, 1000));
+  assert.equal(await page.locator('clipper-dock .toast').count(), 0, '补装后不该再提醒「插件已更新，刷新这页」');
+  assert.equal(await page.locator('clipper-ribbon').count(), answers, '每条回答只该有一套丝带（旧脚本的要收起）');
+  await page.locator('clipper-dock .card').evaluateAll(cs => cs.forEach(c => c.setAttribute('data-old', '')));
+  const done = page.locator('clipper-dock .card.ok:not([data-old]), clipper-dock .card.bad:not([data-old])');
+  await page.locator(`${ANSWER} clipper-ribbon button`).click();
+  await done.waitFor({ timeout: 30_000 });
+  const text = await done.innerText();
+  assert.match(text, /^已(收藏|更新)/, text);
+});
+
+test('插件刷新后没刷新页面、也没补装上：右下角提醒刷新、点了就重新加载页面；收藏提示「刷新这个页面」，不一直卡在入库', async () => {
+  await worker().evaluate(() => chrome.runtime.reload()).catch(() => {});
   await new Promise(r => setTimeout(r, 1000));
   // 旧卡片 8 秒后自动关，按个数找新卡片会对不上：先给旧卡片打记号
   await page.locator('clipper-dock .card').evaluateAll(cs => cs.forEach(c => c.setAttribute('data-old', '')));
@@ -1184,8 +1214,8 @@ test('插件刷新后没刷新页面：右下角提醒刷新、点了就重新�
   const text = await done.innerText();
   assert.match(text, /^收藏失败\n[\s\S]*插件刚更新过，刷新这个页面后再收藏$/, text);
   assert.equal(await done.locator('li.on').count(), 0, '不该还有转圈的步骤');
-  // 页面一有变动就提醒刷新；点「刷新页面」页面重新加载、旧提醒没了。
-  // 刷新后连上新插件、丝带重新挂上这一步测不了：Playwright 里 chrome.runtime.reload() 之后插件不会再起来（2026-11-11 实验：服务进程 0 个，新开页面也没有丝带）
+  // 页面一有变动就提醒刷新（补装失败时的兜底）；点「刷新页面」页面重新加载、旧提醒没了。
+  // chrome.runtime.reload() 在 Playwright 里重载后插件起不来（L-21），正好模拟「没补装上」；补装成功的情形见上一条
   const toast = page.locator('clipper-dock .toast');
   await toast.waitFor({ timeout: 2_000 });
   assert.match(await toast.innerText(), /^!\n插件已更新，刷新这页才能收藏\n这个页面还连着更新前的插件，点丝带会存不上。\n刷新页面\n✕$/);

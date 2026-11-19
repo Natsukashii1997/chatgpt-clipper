@@ -1,6 +1,6 @@
 import { answerBlocks, answerChars, answerFingerprint, countQuestions, answerKey, answerQuestion, answerTitle, findAnswers, inChat, NOISE, repairRequest, selectedBlocks, SITE_NAME, userText } from '@/lib/adapter';
 import { answerToMarkdown, buildNote, buildThreadNote, readCodeEditors, type CodeRead, type ThreadRound } from '@/lib/markdown';
-import type { DownloadFile, FailCode, Request, Response } from '@/lib/messages';
+import { PAGES, type DownloadFile, type FailCode, type Request, type Response } from '@/lib/messages';
 import { clipHash, jumpToClip } from '@/lib/jump';
 import { beijingTime, folderName, noteName } from '@/lib/naming';
 import { exportPdf, pdfAnswer, type PdfAnswer, type PdfDoc, type PdfRound } from '@/lib/pdf';
@@ -9,9 +9,18 @@ import { readThread } from '@/lib/thread';
 import { mountRibbon, notice, progressCard, STEPS, UI_ATTR, type Pdf, type Place, type RibbonState } from '@/lib/ui';
 
 export default defineContentScript({
-  matches: ['https://chatgpt.com/*', 'https://claude.ai/*'],
+  matches: PAGES,
   runAt: 'document_idle',
-  main() {
+  main(ctx) {
+    // 插件更新或重新加载后，后台给已开的页面补装一份新脚本（FR-9）。新的一份启动时，WXT 通知旧的一份作废：
+    // 旧的停掉监听和计时，收起自己挂的丝带、进度卡和提醒，让新的一份重新挂。作废通知是同步的，新的一份挂丝带之前旧的已收完
+    ctx.onInvalidated(() => {
+      observer.disconnect();
+      clearTimeout(pending);
+      cancelAnimationFrame(picking);
+      clearTimeout(watchTimer);
+      document.querySelectorAll(`[${UI_ATTR}]`).forEach(n => n.remove());
+    });
     const scan = () => {
       const check: Ribbon[] = [];
       for (const el of findAnswers()) {
@@ -34,14 +43,14 @@ export default defineContentScript({
       watchChat();
     };
     // 新回答、切换对话时补挂丝带；React 重绘掉了也补回来
-    let pending = 0;
-    new MutationObserver(() => {
+    let pending = 0, picking = 0;
+    const observer = new MutationObserver(() => {
       if (!pending) pending = window.setTimeout(() => { pending = 0; scan(); }, 300);
-    }).observe(document.body, { childList: true, subtree: true });
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
     scan();
-    // 选中文字时，选区所在回答的丝带变荧光笔
-    let picking = 0;
-    document.addEventListener('selectionchange', () => {
+    // 选中文字时，选区所在回答的丝带变荧光笔（作废时 ctx 自动摘掉监听）
+    ctx.addEventListener(document, 'selectionchange', () => {
       if (!picking) picking = requestAnimationFrame(() => {
         picking = 0;
         for (const el of findAnswers()) ribbons.get(el)?.pick(picked(el).length);
