@@ -4,12 +4,16 @@ import { defineConfig } from 'wxt';
 // 页面不给 CORS 头，用户 2026-11-02 同意）。页面访问只来自内容脚本的 matches（https://chatgpt.com/*、https://claude.ai/*，后者用户 2026-11-03 同意），
 // 不要 <all_urls>、activeTab。debugger 只为一键导出 PDF（FR-15，常浩 2026-11-10 确认）：只接到插件自己开的打印页上，
 // 导完马上断开；导出那一两秒浏览器顶部会出现「已开始调试此浏览器」提示条。
+// scripting 和 host_permissions 里的 chatgpt.com、claude.ai 只为插件安装、更新后给已开的这两个站的页面补装内容脚本
+// （FR-9，常浩 2026-11-19 选「只补装」，同日同意加这两个站的 host 权限）：内容脚本的 matches 不算 host 权限（L-24），
+// 没有它 tabs.query 按网址查不到标签页、executeScript 被拒（2026-11-19 探针）。站点范围和内容脚本相同；
+// 后台不向这两个站发请求。
 export default defineConfig({
   srcDir: 'src',
   manifest: {
     name: 'AI 回答收藏器',
     description: '把 ChatGPT 或 Claude 的某条回答存成长图和 Markdown 笔记，写进 Obsidian。全部本地处理，不上传。',
-    permissions: ['downloads', 'debugger'],
-    host_permissions: ['https://images.openai.com/*', 'https://*.oaiusercontent.com/*'],
+    permissions: ['downloads', 'debugger', 'scripting'],
+    host_permissions: ['https://images.openai.com/*', 'https://*.oaiusercontent.com/*', 'https://chatgpt.com/*', 'https://claude.ai/*'],
   },
 });

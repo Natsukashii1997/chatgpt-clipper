@@ -1,5 +1,8 @@
 // 内容脚本 ↔ 后台的消息。写 Vault 和下载都只能在后台做：目录句柄的授权属于扩展来源，browser.downloads 只在后台可用。
 
+/** 内容脚本挂在哪些页面；后台补装脚本（FR-9）找标签页也用这一份 */
+export const PAGES = ['https://chatgpt.com/*', 'https://claude.ai/*'];
+
 export interface DownloadFile { name: string; url: string }
 export type Request =
   | { type: 'save'; id: string; folder: string; files: DownloadFile[] }

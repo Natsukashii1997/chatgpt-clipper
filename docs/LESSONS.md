@@ -137,6 +137,7 @@
 - 证据：`tests/snapshot.test.mjs`「插件刷新后没刷新页面…」（`chrome.runtime.reload()` 模拟；去掉兜底时报红）。
 - 升级：〔提醒〕部分升级（2026-11-19 补层级）：收藏流程的兜底已写测试 `tests/snapshot.test.mjs`「插件刷新后没刷新页面…」，未接进必经检查，见上方「怎么升级」；「请用户复验时先刷新插件、再刷新页面」仍只靠这条提醒。原记录：未升级。（已批：积压清单组 7，已提升为全局 G-35；「插件安装、更新后给已开页面补装内容脚本」另开 PR 做）
 - 提升：已提升为全局 G-35（2026-11-19，agent-kit#83）。
+- 补充（2026-11-19）：插件安装、更新、重新加载后，后台给已开的页面补装内容脚本、旧脚本让位（FR-9 只补装，#12），正常情况下已开页面不用刷新；补装不上的页面仍走本条的兜底。测试 `tests/snapshot.test.mjs`「插件更新或重新加载后，已开的页面不用刷新…」（旧代码下报红「补装后不该再提醒」；去掉让位报红：同一条回答两套丝带）。
 
 ## L-14 虚拟列表里先拿到的节点，过一会儿可能已不在页面上，截出来 0×0（2026-11-04）
 
@@ -202,6 +203,7 @@
 - 正确做法：测「插件更新过、页面连着旧插件」只断言旧页面上的表现（提醒出现、点了页面重新加载、旧提醒没了），「刷新后连上新插件」留给真实 Chrome 验收；这类用例放在测试文件最后，免得后面的用例没有插件可用。
 - 证据：会话临时目录的 `reload-probe.mjs` 实验：重载前服务进程 1 个，之后 1、3、6 秒都是 0 个，刷新页面和新开页面丝带都是 0 条（2026-11-11）。
 - 补充（2026-11-19）：扩展页的「重新加载」（`chrome://extensions` 里调 `chrome.developerPrivate.reload`）同样起不来；能真重载的做法：持久浏览器加 `--enable-unsafe-extension-debugging` 和 `--remote-debugging-port`，`chromium.connectOverCDP` 拿浏览器级 CDP，调 `Extensions.loadUnpacked` 重新装同一目录（同一个 id），之后新开页面丝带照常挂上，旧页面显示「插件已更新」提醒。非持久浏览器里插件一开始就起不来，不能用。证据：`~/Library/Application Support/chatgpt-clipper/evidence/2026-11-19-reinject-probe/`（`probe5.mjs`、`结果.txt`）。
+- 补充（2026-11-19，#12）：`tests/snapshot.test.mjs` 启动时带 `--enable-unsafe-extension-debugging --remote-debugging-port=0`，端口从 `profile/DevToolsActivePort` 读，用 `Extensions.loadUnpacked` 真重载，测「补装后不用刷新」；`chrome.runtime.reload()` 的那条留着测「没补装上」的兜底。重载后有新旧两个服务进程，取 `ctx.serviceWorkers().at(-1)`。
 - 升级：〔提醒〕不升级（2026-11-19，积压清单组 16）：只是测试工具的限制，已靠用例顺序（这类用例放文件最后）绕开。此前：〔提醒〕未升级。（2026-11-19 补层级）
 
 ## L-22 只看 DOM 增删判断「页面还在变」，漏掉只改文字的变化（2026-11-11）
@@ -219,3 +221,11 @@
 - 正确做法：侦察时先拿出事那类对话和几个普通对话比（只读结构，编号换成 ID），找出差在哪；新选择器在两类对话上各核一遍「认出的回答条数 = `data-conversation-role="assistant"` 读屏标题条数」、没有一条被重复认出，普通对话里新旧选择器命中要完全相同。修复请求里界面标记的取值（如 `generated-image-gallery`）是判断是哪类对话的线索。
 - 证据：`docs/recon/2026-11-18-生成图片回答侦察记录.md`；`tests/snapshot.test.mjs`「ChatGPT 生成图片的回答」改代码前丝带挂不上报红（`2026-11-18-生成图片-改前红.log`）。
 - 升级：〔提醒〕不升级（2026-11-19，积压清单组 16）：这次的问题已有测试「ChatGPT 生成图片的回答」守着；剩下的是侦察方法，属于判断题。此前：〔提醒〕未升级。（2026-11-19 补层级：生成图片这次的问题有测试「ChatGPT 生成图片的回答」守着，条目本身是侦察方法）
+
+## L-24 内容脚本的 `matches` 不算 host 权限：只加 `scripting` 补装不了脚本（2026-11-19）
+
+- 现象：照驿窗的做法在 `runtime.onInstalled` 里给已开页面补装内容脚本，只加了 `scripting` 权限，重载插件后页面照旧提醒刷新。探针：后台 `tabs.query({ url: [chatgpt.com、claude.ai] })` 查到 0 个标签页，`tabs.query({})` 拿到的 `url` 全是 `undefined`，`scripting.executeScript` 报「Cannot access contents of the page. Extension manifest must request permission to access the respective host.」
+- 根因：Chrome 里内容脚本的 `matches` 只管声明式注入，不算 host 权限；按网址查标签页和 `executeScript` 都要 `host_permissions`（或 `tabs` + host 权限）。驿窗的 manifest 本来就有 `host_permissions: https://chatgpt.com/*`，所以没踩到。
+- 正确做法：要在后台对某站的已开标签页补装脚本，`host_permissions` 里写上同样的站点（站点范围和内容脚本相同，不扩大）；动权限前先问常浩（本项目权限逐项经他同意）。改完用真重载的用例验证，不能只看 manifest。
+- 证据：探针 `~/Library/Application Support/chatgpt-clipper/evidence/2026-11-19-fr9-reinject/`（`green-new-code.txt` 只加 scripting 时用例仍红，`green-with-host.txt` 加 host 权限后通过）；`wxt.config.ts` 注释。
+- 升级：〔提醒〕未升级（2026-11-19）：测试「插件更新或重新加载后，已开的页面不用刷新…」去掉这两个 host 权限会报红，但本项目测试没接进必经检查；换个插件项目也成立，可提议并进全局 G-35 的正确做法。

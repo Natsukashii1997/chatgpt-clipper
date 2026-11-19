@@ -1,4 +1,4 @@
-import { DOWNLOAD_ROOT, PART_CHARS, type PrintPart, type Request, type Response } from '@/lib/messages';
+import { DOWNLOAD_ROOT, PAGES, PART_CHARS, type PrintPart, type Request, type Response } from '@/lib/messages';
 import { dirState, finishThread, getSaved, loadDir, loadWhere, obsidianUrl, saveCollection, threadFolder, writeFiles } from '@/lib/vault';
 
 export default defineBackground(() => {
@@ -6,7 +6,21 @@ export default defineBackground(() => {
     handle(msg).then(reply, (e: Error) => reply({ ok: false, error: e.message }));
     return true;
   });
+  browser.runtime.onInstalled.addListener(({ reason }) => {
+    if (reason === 'install' || reason === 'update') void reinject();
+  });
 });
+
+// 插件安装、更新、重新加载后，Chrome 不给已开的页面换新脚本，旧脚本和后台断了联系（L-10、L-13，全局 G-35）。
+// 给已开的 ChatGPT / Claude 页面补装一份，旧的一份让位（content.ts 的 ctx.onInvalidated），不用刷新页面就能收藏
+// （FR-9，常浩 2026-11-19 选「只补装」）。补装不上的页面（休眠的标签页等）旧脚本照旧提醒刷新
+async function reinject() {
+  for (const tab of await browser.tabs.query({ url: PAGES })) {
+    if (tab.id === undefined) continue;
+    await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['/content-scripts/content.js'] })
+      .catch((e: Error) => console.warn(`[chatgpt-clipper] 标签页 ${tab.id} 没补装上，页面上会提醒刷新`, e.message));
+  }
+}
 
 async function handle(msg: Request): Promise<Response> {
   if (msg.type === 'save' || msg.type.startsWith('thread-')) {
