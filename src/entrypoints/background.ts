@@ -1,5 +1,5 @@
 import { DOWNLOAD_ROOT, PAGES, PART_CHARS, type PrintPart, type Request, type Response } from '@/lib/messages';
-import { cancelThread, dirState, finishThread, getSaved, loadDir, loadWhere, obsidianUrl, saveCollection, threadFolder, writeThreadFile } from '@/lib/vault';
+import { cancelThread, findDir, finishThread, getSaved, loadWhere, obsidianUrl, saveCollection, threadFolder, writeThreadFile } from '@/lib/vault';
 
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener((msg: Request, _sender, reply: (r: Response) => void) => {
@@ -28,7 +28,9 @@ async function handle(msg: Request): Promise<Response> {
     return { ok: true };
   }
   if (msg.type === 'save' || msg.type.startsWith('thread-')) {
-    const dir = await loadDir(), state = await dirState(dir);
+    const { dir, state, waited } = await findDir();
+    if (state === 'stuck') return { ok: false, code: 'no-permission',
+      error: `读不出${dir ? `文件夹「${dir.name}」` : ' Vault 文件夹'}的授权（浏览器 ${waited / 1000} 秒没回应），去设置页重新选一次文件夹` };
     if (!dir) return { ok: false, code: 'no-folder', error: '还没选 Vault 文件夹' };
     if (state !== 'granted') return { ok: false, code: 'no-permission', error: `文件夹「${dir.name}」的授权已失效` };
     if (msg.type === 'thread-begin') {

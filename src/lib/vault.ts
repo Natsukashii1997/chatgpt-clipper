@@ -275,9 +275,22 @@ async function onlyOurs(sub: FileSystemDirectoryHandle, note?: string): Promise<
   return true;
 }
 
-export type DirState = 'none' | PermissionState;
+export type DirState = 'none' | 'stuck' | PermissionState;
 export async function dirState(dir?: FileSystemDirectoryHandle): Promise<DirState> {
   return dir ? dir.queryPermission({ mode: 'readwrite' }) : 'none';
+}
+
+/** 取出设置页存的文件夹并查授权。真实 Chrome 里这两步一直不回过（2026-11-20：入库一直转圈、设置页停在「未选择」，原因未查清），
+ *  限时 5 秒，到时算 'stuck'，由调用方写明并让用户重新选文件夹。测试里可以用 self.__dirLimit 改小 */
+export async function findDir(): Promise<{ dir?: FileSystemDirectoryHandle; state: DirState; waited: number }> {
+  const ms = (globalThis as { __dirLimit?: number }).__dirLimit ?? 5_000;
+  let dir: FileSystemDirectoryHandle | undefined, timer: ReturnType<typeof setTimeout> | undefined;
+  const state = await Promise.race([
+    (async () => dirState(dir = await loadDir()))(),
+    new Promise<'stuck'>(r => { timer = setTimeout(() => r('stuck'), ms); }),
+  ]);
+  clearTimeout(timer);
+  return { dir, state, waited: ms };
 }
 
 export interface VaultFile { name: string; data: Blob | string }
