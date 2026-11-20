@@ -1,8 +1,9 @@
-import { BUILD, DOWNLOAD_ROOT, PAGES, PART_CHARS, type DownloadFile, type PrintPart, type Request, type Response } from '@/lib/messages';
-import { cancelThread, diagnose, findDir, loadPageDiag, finishThread, getSaved, loadWhere, obsidianUrl, saveCollection, threadFolder, writeThreadFile } from '@/lib/vault';
+import { BUILD, DOWNLOAD_ROOT, PAGES, PART_CHARS, type DiagStep, type DownloadFile, type Failure, type Kind, type Messages, type PrintPart, type Req } from '@/lib/messages';
+import { limit, Stuck, within } from '@/lib/timeout';
+import { beginThread, cancelThread, diagnose, endThread, findDir, getSaved, loadPageDiag, loadWhere, obsidianUrl, saveCollection, stageThreadFile } from '@/lib/vault';
 
 export default defineBackground(() => {
-  browser.runtime.onMessage.addListener((msg: Request, sender, reply: (r: Response) => void) => {
+  browser.runtime.onMessage.addListener((msg: Req, sender, reply: (r: unknown) => void) => {
     // 插件自己的页面（设置页）发来的才算自己人；内容脚本发来的，sender.url 是网页地址
     handle(msg, !!sender.url?.startsWith(browser.runtime.getURL(''))).then(reply, (e: Error) => reply({ ok: false, error: e.message }));
     return true;
@@ -23,74 +24,96 @@ async function reinject() {
   }
 }
 
-async function handle(msg: Request, own = false): Promise<Response> {
-  if (msg.type === 'thread-cancel') {
-    await cancelThread(msg.job);
-    return { ok: true };
-  }
-  if (msg.type === 'save' || msg.type.startsWith('thread-')) {
-    const { dir, state, waited } = await findDir();
-    if (state === 'stuck') return { ok: false, code: 'no-permission',
-      error: `读不出${dir ? `文件夹「${dir.name}」` : ' Vault 文件夹'}的授权（浏览器 ${waited / 1000} 秒没回应），去设置页重新选一次文件夹` };
-    if (!dir) return { ok: false, code: 'no-folder', error: '还没选 Vault 文件夹' };
-    if (state !== 'granted') return { ok: false, code: 'no-permission', error: `文件夹「${dir.name}」的授权已失效` };
-    if (msg.type === 'thread-begin') {
-      const r = await threadFolder(dir, msg.id, msg.folder);
-      return { ok: true, folder: r.name, job: r.job, path: `${dir.name}/${r.name}`, updated: r.updated, moved: r.moved };
-    }
-    if (msg.type === 'thread-file') {
-      await writeThreadFile(dir, msg.job, { name: msg.file.name, data: await fileBlob(msg.file) });
-      return { ok: true };
-    }
-    if (msg.type === 'thread-end') {
-      await finishThread(dir, msg.id, msg.folder, { name: msg.note.name, data: await fileBlob(msg.note) }, msg.images, msg.job);
-      const where = await loadWhere();
-      return { ok: true, path: `${dir.name}/${msg.folder}`, open: where ? obsidianUrl(where, msg.folder, msg.note.name) : '' };
-    }
-    if (msg.type !== 'save') return { ok: false, error: '未知消息' };
+async function handle(msg: Req, own = false): Promise<unknown> {
+  const run = handlers[msg.type] as ((m: Req, own: boolean) => Promise<object | Failure>) | undefined;
+  if (!run) return { ok: false, error: '未知消息' };
+  const res = await run(msg, own);
+  return 'ok' in res ? res : { ok: true, ...res };
+}
+
+/** 每种消息怎么处理：返回成功时带回去的内容（messages.ts 里的 res），或一个失败 */
+type Handlers = { [K in Kind]: (msg: Req<K>, own: boolean) => Promise<Messages[K]['res'] | Failure> };
+const handlers: Handlers = {
+  async save(msg) {
+    const v = await vaultDir();
+    if ('ok' in v) return v;
     const files = await Promise.all(msg.files.map(async f => ({ name: f.name, data: await fileBlob(f) })));
-    const r = await saveCollection(dir, msg.id, msg.folder, files);
+    const r = await saveCollection(v.dir, msg.id, msg.folder, files);
     const where = await loadWhere(), note = files.find(f => f.name.endsWith('.md'))?.name;
-    return { ok: true, path: `${dir.name}/${r.name}`, updated: r.updated, moved: r.moved,
-      open: where && note && !r.moved ? obsidianUrl(where, r.name, note) : '' };
-  }
-  if (msg.type === 'saved') {
+    return { path: `${v.dir.name}/${r.name}`, updated: r.updated, moved: r.moved, open: where && note && !r.moved ? obsidianUrl(where, r.name, note) : '' };
+  },
+  async saved(msg) {
     const hit = await Promise.all(msg.ids.map(getSaved));
-    return { ok: true, saved: msg.ids.filter((_, i) => hit[i]) };
-  }
-  if (msg.type === 'download') {
+    return { saved: msg.ids.filter((_, i) => hit[i]) };
+  },
+  async download(msg) {
     const ids: number[] = [];
     for (const f of msg.files) {
       dataOnly(f);
       ids.push(await browser.downloads.download({ url: f.url, filename: `${DOWNLOAD_ROOT}/${msg.folder}/${f.name}`, conflictAction: 'uniquify', saveAs: false }));
     }
-    return { ok: true, ids };
-  }
-  if (msg.type === 'show') {
+    return { ids };
+  },
+  async show(msg) {
     browser.downloads.show(msg.id);
-    return { ok: true };
-  }
-  if (msg.type === 'image') return { ok: true, dataUrl: await imageDataUrl(msg.url) };
-  if (msg.type === 'pdf-part') {
-    jobs.set(msg.job, (jobs.get(msg.job) ?? '') + msg.text);
-    return { ok: true };
-  }
-  if (msg.type === 'pdf') {
-    const html = jobs.get(msg.job) ?? '';
-    jobs.delete(msg.job);
-    if (!html) return { ok: false, error: '要导出的内容没送到后台' };
-    return { ok: true, ...(await printPdf(html, msg.name, msg.width)) };
-  }
-  if (msg.type === 'diag') {
+    return {};
+  },
+  async options() {
+    await browser.runtime.openOptionsPage();
+    return {};
+  },
+  async diag(_msg, own) {
     // 页面上的 clipper-diag 事件网页脚本也能触发：不是设置页问的，就不带已收藏条数
     const steps = await diagnose(), page = await loadPageDiag().catch(() => undefined);
-    return { ok: true, diag: own ? { build: BUILD, steps, page } : { build: BUILD, steps: steps.map(noCounts), page: page && { ...page, steps: page.steps.map(noCounts) } } };
-  }
-  if (msg.type === 'options') {
-    await browser.runtime.openOptionsPage();
-    return { ok: true };
-  }
-  return { ok: false, error: '未知消息' };
+    return { diag: own ? { build: BUILD, steps, page } : { build: BUILD, steps: steps.map(noCounts), page: page && { ...page, steps: page.steps.map(noCounts) } } };
+  },
+  async image(msg) {
+    return { dataUrl: await imageDataUrl(msg.url) };
+  },
+  async 'thread-begin'(msg) {
+    const v = await vaultDir();
+    if ('ok' in v) return v;
+    const r = await beginThread(v.dir, msg.id, msg.folder);
+    return { folder: r.name, job: r.job, path: `${v.dir.name}/${r.name}`, updated: r.updated, moved: r.moved };
+  },
+  async 'thread-file'(msg) {
+    const v = await vaultDir();
+    if ('ok' in v) return v;
+    await stageThreadFile(v.dir, msg.job, { name: msg.file.name, data: await fileBlob(msg.file) });
+    return {};
+  },
+  async 'thread-end'(msg) {
+    const v = await vaultDir();
+    if ('ok' in v) return v;
+    await endThread(v.dir, msg.id, msg.folder, { name: msg.note.name, data: await fileBlob(msg.note) }, msg.images, msg.job);
+    const where = await loadWhere();
+    return { path: `${v.dir.name}/${msg.folder}`, open: where ? obsidianUrl(where, msg.folder, msg.note.name) : '' };
+  },
+  // 取消只清本机暂存，不查 Vault 文件夹和授权
+  async 'thread-cancel'(msg) {
+    await cancelThread(msg.job);
+    return {};
+  },
+  async 'pdf-part'(msg) {
+    pdfParts.set(msg.job, (pdfParts.get(msg.job) ?? '') + msg.text);
+    return {};
+  },
+  async pdf(msg) {
+    const html = pdfParts.get(msg.job) ?? '';
+    pdfParts.delete(msg.job);
+    if (!html) return { ok: false, error: '要导出的内容没送到后台' };
+    return printPdf(html, msg.name, msg.width);
+  },
+};
+
+/** 写 Vault 之前：取出文件夹并确认有授权；不行就给出失败原因（去设置页能解决的带 code） */
+async function vaultDir(): Promise<{ dir: FileSystemDirectoryHandle } | Failure> {
+  const { dir, state, waited } = await findDir();
+  if (state === 'stuck') return { ok: false, code: 'no-permission',
+    error: `读不出${dir ? `文件夹「${dir.name}」` : ' Vault 文件夹'}的授权（浏览器 ${waited / 1000} 秒没回应），去设置页重新选一次文件夹` };
+  if (!dir) return { ok: false, code: 'no-folder', error: '还没选 Vault 文件夹' };
+  if (state !== 'granted') return { ok: false, code: 'no-permission', error: `文件夹「${dir.name}」的授权已失效` };
+  return { dir };
 }
 
 /** 内容脚本送来的文件都是 data: 地址。别的地址不取、不下载：后台有图片域名的权限，不替别人取东西 */
@@ -103,7 +126,7 @@ async function fileBlob(f: DownloadFile): Promise<Blob> {
 }
 
 /** 自检结果里去掉已收藏条数（和总条数，减一下就是它） */
-const noCounts = <T extends { out: string }>(s: T): T => ({ ...s, out: s.out.replace(/共 \d+ 条：已收藏 \d+，/, '') });
+const noCounts = (s: DiagStep): DiagStep => ({ ...s, out: s.out.replace(/共 \d+ 条：已收藏 \d+，/, '') });
 
 // 长图里的跨域图片：页面不给 CORS 头，内容脚本读不到，由后台按 host_permissions 取（用户 2026-11-02 同意只加这两个域名）。
 // 和 wxt.config.ts 的 host_permissions 保持一致；只取图片，不带任何东西出去
@@ -121,35 +144,33 @@ async function imageDataUrl(url: string): Promise<string> {
   return `data:${type.split(';')[0]};base64,${btoa(bin)}`;
 }
 
-// 导出 PDF（FR-15，常浩 2026-11-10 选 A 版、确认加 debugger 权限）：内容脚本分段送来的 HTML 先攒在这里
-const jobs = new Map<string, string>();
+// 导出 PDF（FR-15，常浩 2026-11-10 选 A 版、确认加 debugger 权限）：内容脚本分段送来的 HTML 先攒在这里（导出任务号 → 已收到的 HTML）
+const pdfParts = new Map<string, string>();
 
 // A4，上下页边距 14mm、左右 12mm；版心宽 186mm = 703 CSS 像素，回答比这宽就整页按比例缩小
 const A4 = { paperWidth: 8.27, paperHeight: 11.69, marginTop: 0.55, marginBottom: 0.55, marginLeft: 0.47, marginRight: 0.47 };
 const PRINT_WIDTH = 703;
 
-// 每一步限时（毫秒）：哪一步卡住就停下，写清卡在第几步，卡片不会一直「正在导出」（2026-11-10 常浩在真实 Chrome 里卡住过，原因未查清）。
-// 第 1 步含打印页等图片和字体（打印页自己最多等 8 秒）。测试里可以用 self.__pdfLimits 改小
-const LIMITS = { open: 20_000, attach: 10_000, print: 60_000, save: 15_000 };
+// 每一步限时（timeout.ts 的 pdfOpen / pdfAttach / pdfPrint / pdfSave）：哪一步卡住就停下，写清卡在第几步，卡片不会一直「正在导出」
+// （2026-11-10 常浩在真实 Chrome 里卡住过，原因未查清）
 
 /** 在后台标签页里打开插件自己的打印页，放进 HTML，接上 debugger 用 Page.printToPDF 打印（不弹打印框），
  *  存进「下载」根目录（重名加序号），导完断开、关掉标签页。返回下载编号和页数 */
 async function printPdf(html: string, name: string, width: number): Promise<{ ids: number[]; pages: number }> {
-  const limit = { ...LIMITS, ...(globalThis as { __pdfLimits?: Partial<typeof LIMITS> }).__pdfLimits };
   const tab = await browser.tabs.create({ url: browser.runtime.getURL('/print.html'), active: false });
   const target = { tabId: tab.id! };
   let attached = false;
   try {
-    await step(1, '打开打印页', limit.open, (async () => {
+    await step(1, '打开打印页', limit('pdfOpen'), (async () => {
       for (let i = 0; i < html.length || i === 0; i += PART_CHARS)
         await toPrintPage(tab.id!, { type: 'print-part', text: html.slice(i, i + PART_CHARS), last: i + PART_CHARS >= html.length });
     })());
-    await step(2, '接上调试', limit.attach, browser.debugger.attach(target, '1.3'));
+    await step(2, '接上调试', limit('pdfAttach'), browser.debugger.attach(target, '1.3'));
     attached = true;
-    const { data } = (await step(3, '打印', limit.print, browser.debugger.sendCommand(target, 'Page.printToPDF',
+    const { data } = (await step(3, '打印', limit('pdfPrint'), browser.debugger.sendCommand(target, 'Page.printToPDF',
       { ...A4, printBackground: true, scale: Math.max(0.1, Math.min(1, PRINT_WIDTH / Math.max(width, 1))) }))) as { data: string };
     const pages = atob(data).match(/\/Type\s*\/Page(?![s\w])/g)?.length ?? 0;
-    const id = await step(4, '存进下载', limit.save,
+    const id = await step(4, '存进下载', limit('pdfSave'),
       browser.downloads.download({ url: `data:application/pdf;base64,${data}`, filename: `${name}.pdf`, conflictAction: 'uniquify', saveAs: false }));
     return { ids: [id], pages };
   } finally {
@@ -161,16 +182,13 @@ async function printPdf(html: string, name: string, width: number): Promise<{ id
 /** 导出的一步：超时或出错都报「第 n 步「名字」…」；每步用时打在后台控制台，便于排查 */
 async function step<T>(no: number, name: string, ms: number, work: Promise<T>): Promise<T> {
   const t0 = performance.now();
-  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await Promise.race([work, new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`第 ${no} 步「${name}」超过 ${ms / 1000} 秒没完成，点「重试」再导一次`)), ms);
-    })]);
+    return await within(name, ms, work);
   } catch (e) {
+    if (e instanceof Stuck) throw new Error(`第 ${no} 步「${name}」超过 ${ms / 1000} 秒没完成，点「重试」再导一次`);
     const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(msg.startsWith('第 ') ? msg : `第 ${no} 步「${name}」：${debuggerError(msg)}`);
+    throw new Error(`第 ${no} 步「${name}」：${debuggerError(msg)}`);
   } finally {
-    clearTimeout(timer);
     console.info(`[chatgpt-clipper] 导出 PDF 第 ${no} 步「${name}」用了 ${Math.round(performance.now() - t0)}ms`);
   }
 }

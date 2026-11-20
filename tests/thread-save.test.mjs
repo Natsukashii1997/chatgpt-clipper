@@ -7,10 +7,9 @@ import { stripTypeScriptTypes } from 'node:module';
 
 const content = readFileSync(new URL('../src/entrypoints/content.ts', import.meta.url), 'utf8');
 const capture = content.slice(content.indexOf('interface ThreadAnswer'), content.indexOf('/** 整段收藏里的一条回答'));
-const sendStart = content.indexOf('async function send(');
-const send = content.slice(sendStart, content.indexOf('\n}', sendStart) + 2);
-const askStart = content.indexOf('async function ask(');
-const ask = content.slice(askStart, content.indexOf('\n}', askStart) + 2);
+// ask / send / within 取真实源码，去掉 import、export 后放进同一个沙箱
+const lib = ['../src/lib/timeout.ts', '../src/lib/ask.ts'].map(f => readFileSync(new URL(f, import.meta.url), 'utf8')
+  .replace(/^import .*$/gm, '').replace(/^export /gm, '')).join('\n');
 const compile = code => stripTypeScriptTypes(code);
 
 async function collect(fail, code, downloadsFail = false) {
@@ -23,8 +22,8 @@ async function collect(fail, code, downloadsFail = false) {
     if (msg.type === 'download') return downloadsFail ? { ok: false, error: '下载失败' } : { ok: true, ids: [messages.length] };
     return { ok: true };
   } } };
-  const run = runInNewContext(compile(`${capture}\n${send}\n${ask}\ncaptureThread;`), {
-    browser, console: { error() {} }, Date, Promise, setTimeout, clearTimeout, saveLimit: () => 40,
+  const run = runInNewContext(compile(`${lib}\n${capture}\ncaptureThread;`), {
+    browser, console: { error() {} }, Date, Promise, setTimeout, clearTimeout, __limits: { save: 40 },
     progressCard: () => ({ title() {}, step: (...v) => steps.push(v), finish: (...v) => finished.push(v) }),
     readThread: async visit => {
       await visit({ role: 'user', el: {} }, 1);
@@ -81,11 +80,11 @@ test('未选 Vault 仍只下载长图；成功仍提交而不下载、不取消'
 
 test('取消暂存不依赖 Vault 授权，后台实际转交指定任务', async () => {
   const source = readFileSync(new URL('../src/entrypoints/background.ts', import.meta.url), 'utf8');
-  const body = source.slice(source.indexOf('async function handle('), source.indexOf('// 长图里的跨域图片'));
+  const body = source.slice(source.indexOf('async function handle('), source.indexOf('/** 写 Vault 之前'));
   const cancelled = [];
   const handle = runInNewContext(compile(`${body}\nhandle;`), {
     cancelThread: async job => cancelled.push(job),
-    loadDir: async () => { throw new Error('取消不应读取 Vault'); },
+    findDir: async () => { throw new Error('取消不应读取 Vault'); },
   });
   const response = await handle({ type: 'thread-cancel', job: 'JOB' });
   assert.equal(response.ok, true);

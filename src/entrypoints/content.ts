@@ -1,6 +1,8 @@
 import { answerBlocks, answerChars, answerFingerprint, countQuestions, answerKey, answerQuestion, answerTitle, findAnswers, inChat, NOISE, repairRequest, selectedBlocks, SITE_NAME, userText } from '@/lib/adapter';
 import { answerToMarkdown, buildNote, buildThreadNote, readCodeEditors, type CodeRead, type ThreadRound } from '@/lib/markdown';
-import { BUILD, PAGES, type DownloadFile, type FailCode, type Request, type Response } from '@/lib/messages';
+import { ask, send } from '@/lib/ask';
+import { BUILD, PAGES, type DownloadFile, type FailCode, type Failure } from '@/lib/messages';
+import { limit } from '@/lib/timeout';
 import { clipHash, jumpToClip } from '@/lib/jump';
 import { beijingTime, folderName, noteName } from '@/lib/naming';
 import { exportPdf, pdfAnswer, type PdfAnswer, type PdfDoc, type PdfRound } from '@/lib/pdf';
@@ -52,10 +54,7 @@ export default defineContentScript({
     // 自检：页面上发一个 clipper-diag 事件，把这份脚本和后台的打包时间、后台入库各步通不通写到 <html data-clipper-diag>
     //（只有各步的状态，没有文件夹名、收藏内容和已收藏条数：网页脚本也能触发这个事件）。排查「卡在入库」用，后台 20 秒不回话也写明（L-26）
     ctx.addEventListener(document, 'clipper-diag', () => void (async () => {
-      const res = (await Promise.race([
-        browser.runtime.sendMessage({ type: 'diag' } satisfies Request).catch((e: Error) => ({ ok: false, error: e.message })),
-        new Promise(r => setTimeout(r, 20_000, { ok: false, error: '后台 20 秒没回话' })),
-      ])) as Response | undefined;
+      const { res } = await ask({ type: 'diag' }, 20_000);
       document.documentElement.dataset.clipperDiag = JSON.stringify({ content: BUILD, background: res?.ok ? res.diag : { error: res?.ok === false ? res.error : '后台无响应' } });
     })());
     // 选中文字时，选区所在回答的丝带变荧光笔（作废时 ctx 自动摘掉监听）
@@ -146,18 +145,11 @@ const ribbons = new WeakMap<HTMLElement, Ribbon>();
 /** 收藏过的回答，丝带显示「已收藏」 */
 async function markSaved(list: Ribbon[]) {
   const ids = await Promise.all(list.map(r => answerFingerprint(r.el)));
-  const res = (await browser.runtime.sendMessage({ type: 'saved', ids } satisfies Request).catch(() => undefined)) as Response | undefined;
-  if (res?.ok) list.forEach((r, i) => { if (r.state === 'idle' && res.saved?.includes(ids[i]!)) r.set('done'); });
+  const { res } = await ask({ type: 'saved', ids }, 0);
+  if (res?.ok) list.forEach((r, i) => { if (r.state === 'idle' && res.saved.includes(ids[i]!)) r.set('done'); });
 }
 
 const busy = new WeakSet<HTMLElement>();
-/** 等后台回话最多多久：写文件平常几秒内完成，留足余量给特别长的长图。
- *  测试里在内容脚本自己的环境里设 globalThis.__saveLimit 改小（和后台的 __dirLimit 同一种做法；网页脚本够不到这个环境） */
-const SAVE_LIMIT = 60_000;
-/** 取一张跨域图片最多等后台多久 */
-const IMAGE_LIMIT = 20_000;
-const saveLimit = () => (globalThis as { __saveLimit?: number }).__saveLimit ?? SAVE_LIMIT;
-
 // 只收选中段落时，没选中的部分打上这个属性，长图和笔记都去掉，收完清掉
 const CUT = 'data-clipper-cut';
 
@@ -366,7 +358,7 @@ async function captureThread() {
     const pdf = pdfAction({ title: `${title}（整段）`, site: SITE_NAME, url: base, captured: started, rounds: pdfRounds, thread: true }, folder);
     // 这几条消息也都限时（同单条收藏）：后台不回话就按失败退回下载，不卡在「入库」
     const { res: begin } = await ask({ type: 'thread-begin', id, folder });
-    let failure = begin?.ok ? undefined : begin;
+    let failure: Failure | undefined = begin?.ok ? undefined : begin;
     if (begin?.ok) {
       const [dir = '', ...rest] = (begin.path ?? '').split('/'), sub = rest.join('/'), date = sub.match(/^\d{4}-\d{2}-\d{2}/)?.[0] ?? '';
       const head = sub.slice(date.length).trim() || title;
@@ -381,7 +373,7 @@ async function captureThread() {
           await send({ type: 'thread-file', folder: begin.folder!, job: begin.job!, file });
         }
         // 最后一条要把全部长图写进 Vault，多等一倍
-        const end = await send({ type: 'thread-end', id, folder: begin.folder!, job: begin.job!, note, images: images.map(f => f.name) }, saveLimit() * 2);
+        const end = await send({ type: 'thread-end', id, folder: begin.folder!, job: begin.job!, note, images: images.map(f => f.name) }, limit('save') * 2);
         const status = begin.updated ? '已更新' : '已存入', warn = warns.length > 0;
         card.step(3, 'ok', status);
         const open: Place['open'] = end.open ? { label: '在 Obsidian 里打开 ↗', href: end.open, run: () => openLink(end.open!) }
@@ -469,25 +461,6 @@ function openLink(url: string) {
   a.click();
 }
 
-/** 发给后台、等回话，不成就抛错（同样限时，见 ask） */
-async function send(msg: Request, ms = saveLimit()): Promise<Extract<Response, { ok: true }>> {
-  const { res } = await ask(msg, ms);
-  if (!res) throw new Error('后台无响应');
-  if (!res.ok) throw new Error(res.error);
-  return res;
-}
-
-/** 发给后台，限时等回话：后台一直不回（L-13、L-25）到时按失败算、late 为 true，调用方退回下载，不卡在「入库」 */
-async function ask(msg: Request, ms = saveLimit()): Promise<{ res: Response | undefined; late: boolean }> {
-  let timer: ReturnType<typeof setTimeout> | undefined, late = false;
-  const res = (await Promise.race([
-    browser.runtime.sendMessage(msg).catch((e: Error) => ({ ok: false, error: e.message })),
-    new Promise(r => { timer = setTimeout(() => { late = true; r({ ok: false, error: `后台 ${ms / 1000} 秒没回话` }); }, ms); }),
-  ])) as Response | undefined;
-  clearTimeout(timer);
-  return { res, late };
-}
-
 /** 长图里没嵌进去的东西，写给用户看的话（进度卡标黄、笔记标「可能不完整」） */
 function missedText(m: Missed): string[] {
   return [m.images ? `长图里有 ${m.images} 张图没取到` : '', m.fonts ? `长图里有 ${m.fonts} 个字体没嵌进（换成了系统字体）` : ''].filter(Boolean);
@@ -496,7 +469,7 @@ function missedText(m: Missed): string[] {
 /** 跨域图片交给后台取（内容脚本受页面 CORS 限制） */
 async function fetchImage(url: string): Promise<string> {
   // 同样限时：后台不回话时这张图按没取到算（长图照出、标黄），不卡在「PNG 文件」一步
-  const { res } = await ask({ type: 'image', url }, Math.min(saveLimit(), IMAGE_LIMIT));
+  const { res } = await ask({ type: 'image', url }, Math.min(limit('save'), limit('image')));
   if (!res?.ok || !res.dataUrl) throw new Error(res && !res.ok ? res.error : '图片取不到');
   return res.dataUrl;
 }

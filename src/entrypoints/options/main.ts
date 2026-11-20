@@ -1,6 +1,7 @@
 // 设置页：选一次 Vault 里的目标文件夹，句柄存 IndexedDB；授权失效时在这里重新授权（后台不能弹授权窗口）。
 // 浏览器不给完整路径，只能显示文件夹名。
-import { BUILD, type Request, type Response } from '@/lib/messages';
+import { ask } from '@/lib/ask';
+import { BUILD } from '@/lib/messages';
 import { beijingTime } from '@/lib/naming';
 import { diagnose, findDir, loadDir, loadWhere, saveDir, savePageDiag, saveWhere, type DiagStep, type DirState } from '@/lib/vault';
 
@@ -67,10 +68,7 @@ $('diag').addEventListener('click', async () => {
   void savePageDiag(steps).catch(() => undefined);
   const here = `设置页（打包于 ${stamp(BUILD)}）\n${lines(steps)}`;
   out.textContent = `${here}\n后台：检查中…`;
-  const res = (await Promise.race([
-    browser.runtime.sendMessage({ type: 'diag' } satisfies Request).catch((e: Error) => ({ ok: false, error: e.message })),
-    new Promise(r => setTimeout(r, 20_000, { ok: false, error: '20 秒没回话' })),
-  ])) as Response | undefined;
+  const { res } = await ask({ type: 'diag' }, 20_000);
   out.textContent = `${here}\n${res?.ok && res.diag
     ? `后台（打包于 ${stamp(res.diag.build)}${res.diag.build === BUILD ? '' : '，和设置页不是同一版，去扩展页点一下刷新'}）\n${lines(res.diag.steps)}`
     : `后台：${res?.ok === false ? res.error : '无响应'}`}`;

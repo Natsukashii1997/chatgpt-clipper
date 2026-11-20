@@ -142,11 +142,11 @@ async function collectCard(pg, ribbon) {
   return pg.locator(`clipper-dock .card[data-no="${no}"]`);
 }
 
-/** 改内容脚本等后台回话的限时（毫秒，0 恢复默认）：由后台往这个页面的内容脚本环境里设 __saveLimit，网页脚本够不到那里 */
+/** 改内容脚本等后台回话的限时（毫秒，0 恢复默认）：由后台往这个页面的内容脚本环境里设 __limits.save，网页脚本够不到那里 */
 async function setSaveLimit(sw, pg, ms) {
   await sw.evaluate(async ([url, ms]) => {
     for (const tab of (await chrome.tabs.query({})).filter(t => t.url === url))
-      await chrome.scripting.executeScript({ target: { tabId: tab.id }, args: [ms], func: ms => { if (ms) globalThis.__saveLimit = ms; else delete globalThis.__saveLimit; } });
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, args: [ms], func: ms => { if (ms) (globalThis.__limits ??= {}).save = ms; else delete globalThis.__limits?.save; } });
   }, [pg.url(), ms]);
 }
 
@@ -249,7 +249,7 @@ test('取 Vault 文件夹、查授权一直不回（2026-11-20 常浩真实 Chro
   try {
     // 只有查授权不回（2026-11-20 常浩 Chrome 158 自检实测）：改成试读文件夹，读得通就照常入库，不退回下载
     await sw.evaluate(hangQuery);
-    await sw.evaluate(() => { self.__dirLimit = 1500; });
+    await sw.evaluate(() => { (self.__limits ??= {}).dir = 1500; });
     let n = await downloads(), text = await collect();
     assert.match(text, /入库\s+(已存入|已更新|已收藏过)/, text);
     assert.equal(await downloads(), n, '查授权不回但文件夹读得通，不该退回下载');
@@ -265,7 +265,7 @@ test('取 Vault 文件夹、查授权一直不回（2026-11-20 常浩真实 Chro
     assert.ok(await downloads() > n, '读不出授权时该退回下载');
 
     // 后台别处卡住、一直不回话：页面自己到时停下（页面限时 1.5 秒，后台限时改长到 20 秒）
-    await sw.evaluate(() => { self.__dirLimit = 20_000; });
+    await sw.evaluate(() => { (self.__limits ??= {}).dir = 20_000; });
     // 网页脚本改 <html data-clipper-save-limit> 不再管用（原来的测试开关，网页也能改）；限时只能在内容脚本自己的环境里改
     await page.evaluate(() => { document.documentElement.dataset.clipperSaveLimit = '1'; });
     await setSaveLimit(sw, page, 1500);
@@ -282,14 +282,14 @@ test('取 Vault 文件夹、查授权一直不回（2026-11-20 常浩真实 Chro
     await sw.evaluate(() => {
       if (self.__qp) FileSystemHandle.prototype.queryPermission = self.__qp;
       if (self.__gd) FileSystemDirectoryHandle.prototype.getDirectoryHandle = self.__gd;
-      delete self.__dirLimit;
+      delete self.__limits?.dir;
     });
   }
 
   // 设置页：不停在「未选择」，写明读不出授权、让重新选
   const opt = await ctx.newPage();
   await opt.addInitScript(hang);
-  await opt.addInitScript(() => { self.__dirLimit = 1000; });
+  await opt.addInitScript(() => { (self.__limits ??= {}).dir = 1000; });
   await opt.goto(`chrome-extension://${new globalThis.URL(sw.url()).host}/options.html`);
   await opt.locator('#msg', { hasText: /\S/ }).waitFor({ timeout: 5_000 });
   // 取到了文件夹、卡在查授权：显示文件夹名（测试里的私有存储根目录名字是空的）；连文件夹都取不到时显示「读不出」
@@ -317,7 +317,7 @@ test('存着的文件夹读不出、读它的事务一直不结束（L-26，2026
   };
   try {
     await sw.evaluate(poison);
-    await sw.evaluate(() => { self.__dirLimit = 1500; });
+    await sw.evaluate(() => { (self.__limits ??= {}).dir = 1500; });
     const text = await (await collectCard(page, `${ANSWER} clipper-ribbon button`)).innerText();
     assert.match(text, /入库\s+授权失效/, text);
     assert.match(text, /读不出 Vault 文件夹的授权（浏览器 1\.5 秒没回应），去设置页重新选一次文件夹/, text);
@@ -330,14 +330,14 @@ test('存着的文件夹读不出、读它的事务一直不结束（L-26，2026
   } finally {
     await sw.evaluate(() => {
       if (self.__get) { IDBObjectStore.prototype.get = self.__get; IDBObjectStore.prototype.put = self.__put; delete self.__get; delete self.__put; }
-      delete self.__dirLimit; delete self.__poison;
+      delete self.__limits?.dir; delete self.__poison;
     });
   }
 
   // 设置页：读不出时写明；点「选择文件夹」重新选，存得进、恢复「已授权」
   const opt = await ctx.newPage();
   await opt.addInitScript(poison);
-  await opt.addInitScript(() => { self.__dirLimit = 1000; window.showDirectoryPicker = () => navigator.storage.getDirectory(); });
+  await opt.addInitScript(() => { (self.__limits ??= {}).dir = 1000; window.showDirectoryPicker = () => navigator.storage.getDirectory(); });
   await opt.goto(`chrome-extension://${new globalThis.URL(sw.url()).host}/options.html`);
   await opt.locator('#msg', { hasText: /\S/ }).waitFor({ timeout: 5_000 });
   try {
@@ -1364,7 +1364,7 @@ describe('导出 PDF', () => {
     const card = await collectCard(page, `${ANSWER} clipper-ribbon button`), tabs = ctx.pages().length;
     // 打印这一步永远不回；限时改成 1.5 秒
     await sw.evaluate(() => {
-      self.__pdfLimits = { print: 1500 };
+      (self.__limits ??= {}).pdfPrint = 1500;
       const send = chrome.debugger.sendCommand.bind(chrome.debugger);
       chrome.debugger.sendCommand = (t, method, ...rest) => {
         if (method !== 'Page.printToPDF') return send(t, method, ...rest);
@@ -1375,7 +1375,7 @@ describe('导出 PDF', () => {
     const bad = await exportFrom(card);
     assert.match(bad.row, /^没导出成：第 3 步「打印」超过 1\.5 秒没完成，点「重试」再导一次\s*重试$/, bad.row);
     assert.equal(ctx.pages().length, tabs, '超时了打印用的标签页也该关掉');
-    await sw.evaluate(() => { delete self.__pdfLimits; });
+    await sw.evaluate(() => { delete self.__limits?.pdfPrint; });
     await card.locator('.pdf .lk').click();
     await card.locator('.pdf .ok').waitFor({ timeout: 30_000 });
   });

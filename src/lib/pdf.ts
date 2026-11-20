@@ -1,7 +1,8 @@
 // 导出 PDF（FR-15，常浩 2026-11-10 选定）：提问 + 回答，回答用做长图时那份已写好样式、内嵌了图片字体的快照副本，
 // 和页面上一个样子，排进 A4 分页；图、表格、代码块整块不跨页，文字可选中。不附长图、不放 Obsidian 的属性区。
 // 这里只拼 HTML、分段送给后台；打印和存进「下载」在后台（background.ts printPdf）
-import { PART_CHARS, type Request, type Response } from './messages';
+import { send } from './ask';
+import { PART_CHARS } from './messages';
 import { beijingTime } from './naming';
 import type { Snapshot } from './snapshot';
 
@@ -59,16 +60,10 @@ export function pdfHtml(d: PdfDoc): string {
 export async function exportPdf(d: PdfDoc, name: string): Promise<{ pages: number; id: number }> {
   const html = pdfHtml(d), job = crypto.randomUUID();
   const width = Math.max(...d.rounds.flatMap(r => r.answers.map(a => ('width' in a ? a.width : 0))), 1);
-  for (let i = 0; i < html.length; i += PART_CHARS) await send({ type: 'pdf-part', job, text: html.slice(i, i + PART_CHARS) });
-  const res = await send({ type: 'pdf', job, name, width });
-  return { pages: res.pages ?? 0, id: res.ids?.[0] ?? 0 };
-}
-
-async function send(msg: Request): Promise<Extract<Response, { ok: true }>> {
-  const res = (await browser.runtime.sendMessage(msg)) as Response | undefined;
-  if (!res) throw new Error('后台无响应');
-  if (!res.ok) throw new Error(res.error);
-  return res;
+  for (let i = 0; i < html.length; i += PART_CHARS) await send({ type: 'pdf-part', job, text: html.slice(i, i + PART_CHARS) }, 0);
+  // 不限时：后台打印的每一步自己有限时
+  const res = await send({ type: 'pdf', job, name, width }, 0);
+  return { pages: res.pages, id: res.ids[0] ?? 0 };
 }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
