@@ -1,6 +1,6 @@
 // 给后台发消息（内容脚本、设置页用）。
-import { type Kind, type Ok, type Reply, type Req } from './messages';
-import { limit, Stuck, within } from './timeout';
+import type { Kind, Ok, Reply, Req } from './messages.ts';
+import { limit, Stuck, within } from './timeout.ts';
 
 /** 发给后台，限时等回话：后台一直不回（L-13、L-25）到时按失败算、late 为 true，调用方退回下载，不卡在「入库」。
  *  ms 为 0 不限时。后台没有回任何东西时 res 是 undefined。插件刷新后页面还是旧脚本时这里直接抛错 */
