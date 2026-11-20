@@ -22,8 +22,8 @@ export type Request =
   // name 文件名（不带 .pdf），width 回答排版宽度（按 A4 版心缩放）
   | { type: 'pdf-part'; job: string; text: string }
   | { type: 'pdf'; job: string; name: string; width: number };
-/** 自检结果：build 是这份代码的打包时间（看浏览器里跑的是不是最新版），steps 是每一步通不通、用时（毫秒） */
-export interface Diag { build: string; steps: { step: string; ms: number; out: string }[] }
+/** 自检结果：build 是这份代码的打包时间（看浏览器里跑的是不是最新版），steps 是每一步通不通、用时（毫秒）；page 是设置页上一次自检的结果 */
+export interface Diag { build: string; steps: { step: string; ms: number; out: string }[]; page?: { at: number; steps: { step: string; ms: number; out: string }[] } }
 /** 打包时间（ISO），wxt.config.ts 在打包时写入 */
 declare const __BUILD__: string;
 export const BUILD = __BUILD__;

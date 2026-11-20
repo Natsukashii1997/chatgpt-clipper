@@ -2,7 +2,7 @@
 // 浏览器不给完整路径，只能显示文件夹名。
 import { BUILD, type Request, type Response } from '@/lib/messages';
 import { beijingTime } from '@/lib/naming';
-import { diagnose, findDir, loadDir, loadWhere, saveDir, saveWhere, type DiagStep, type DirState } from '@/lib/vault';
+import { diagnose, findDir, loadDir, loadWhere, saveDir, savePageDiag, saveWhere, type DiagStep, type DirState } from '@/lib/vault';
 
 const $ = (id: string) => document.getElementById(id)!;
 const cur = $('cur'), pick = $('pick') as HTMLButtonElement, reauth = $('reauth') as HTMLButtonElement, msg = $('msg');
@@ -63,7 +63,9 @@ $('diag').addEventListener('click', async () => {
   const out = $('diagOut');
   out.hidden = false;
   out.textContent = '自检中…';
-  const here = `设置页（打包于 ${stamp(BUILD)}）\n${lines(await diagnose())}`;
+  const steps = await diagnose();
+  void savePageDiag(steps).catch(() => undefined);
+  const here = `设置页（打包于 ${stamp(BUILD)}）\n${lines(steps)}`;
   out.textContent = `${here}\n后台：检查中…`;
   const res = (await Promise.race([
     browser.runtime.sendMessage({ type: 'diag' } satisfies Request).catch((e: Error) => ({ ok: false, error: e.message })),
