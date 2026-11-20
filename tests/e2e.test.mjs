@@ -264,15 +264,16 @@ test('取 Vault 文件夹、查授权一直不回（2026-11-20 常浩真实 Chro
     assert.match(text, /\n去授权\n/, text);
     assert.ok(await downloads() > n, '读不出授权时该退回下载');
 
-    // 后台别处卡住、一直不回话：页面自己到时停下（页面限时 1.5 秒，后台限时改长到 20 秒）
+    // 后台别处卡住、一直不回话：页面自己到时停下（页面限时 2.5 秒，后台限时改长到 20 秒）
     await sw.evaluate(() => { (self.__limits ??= {}).dir = 20_000; });
     // 网页脚本改 <html data-clipper-save-limit> 不再管用（原来的测试开关，网页也能改）；限时只能在内容脚本自己的环境里改
     await page.evaluate(() => { document.documentElement.dataset.clipperSaveLimit = '1'; });
-    await setSaveLimit(sw, page, 1500);
+    // 2.5 秒：要短于后台试读文件夹的 3 秒（不然后台先回「读不出授权」）；再短的话机器忙时连退回下载那条消息也会超时
+    await setSaveLimit(sw, page, 2500);
     n = await downloads();
     text = await collect();
     assert.match(text, /入库\s+超时/, text);
-    assert.match(text, /后台 1\.5 秒没回话，没存进 Vault/, text);
+    assert.match(text, /后台 2\.5 秒没回话，没存进 Vault/, text);
     assert.match(text, /^已存到下载目录\n/, text);
     assert.match(text, /\n重试\n/, text);
     assert.ok(await downloads() > n, '后台不回话时该退回下载');

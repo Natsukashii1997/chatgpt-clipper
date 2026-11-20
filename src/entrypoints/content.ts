@@ -3,6 +3,7 @@ import { answerToMarkdown, buildNote, buildThreadNote, readCodeEditors, type Cod
 import { ask, send } from '@/lib/ask';
 import { BUILD, PAGES, type DownloadFile } from '@/lib/messages';
 import { limit } from '@/lib/timeout';
+import { blobToDataUrl } from '@/lib/dom';
 import { clipHash, jumpToClip } from '@/lib/jump';
 import { beijingTime, folderName, noteName } from '@/lib/naming';
 import { exportPdf, pdfAnswer, type PdfAnswer, type PdfDoc, type PdfRound } from '@/lib/pdf';
@@ -415,15 +416,6 @@ async function fetchImage(url: string): Promise<string> {
   const { res } = await ask({ type: 'image', url }, Math.min(limit('save'), limit('image')));
   if (!res?.ok || !res.dataUrl) throw new Error(res && !res.ok ? res.error : '图片取不到');
   return res.dataUrl;
-}
-
-function blobToDataUrl(b: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const fr = new FileReader();
-    fr.onload = () => resolve(fr.result as string);
-    fr.onerror = () => reject(fr.error);
-    fr.readAsDataURL(b);
-  });
 }
 
 // 让进度卡先画出来，再做会卡住主线程的快照

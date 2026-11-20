@@ -2,6 +2,7 @@
 // 和页面上一个样子，排进 A4 分页；图、表格、代码块整块不跨页，文字可选中。不附长图、不放 Obsidian 的属性区。
 // 这里只拼 HTML、分段送给后台；打印和存进「下载」在后台（background.ts printPdf）
 import { send } from './ask';
+import { escapeHtml as esc } from './dom';
 import { PART_CHARS } from './messages';
 import { beijingTime } from './naming';
 import type { Snapshot } from './snapshot';
@@ -65,8 +66,6 @@ export async function exportPdf(d: PdfDoc, name: string): Promise<{ pages: numbe
   const res = await send({ type: 'pdf', job, name, width }, 0);
   return { pages: res.pages, id: res.ids[0] ?? 0 };
 }
-
-const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 // 快照里没有类名：「整块不拆」按标签挑，加上 pdfAnswer 里按边框、底色挑出来的框
 const CSS = `

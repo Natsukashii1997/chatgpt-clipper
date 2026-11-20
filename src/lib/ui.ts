@@ -1,6 +1,7 @@
 // 收藏按钮（左侧书签丝带）与右下角进度卡，方案三（用户 2026-11-02 选定）。
 // 都放在 Shadow DOM 里：不受 ChatGPT 样式影响；宿主带 UI_ATTR，快照时排除，不会截进长图。
 import { ANSWER_GUTTER } from './adapter';
+import { escapeHtml } from './dom';
 
 export const UI_ATTR = 'data-clipper-ui';
 export const STEPS = ['快照', 'PNG 文件', 'MD 文件', '入库'] as const;
@@ -187,7 +188,7 @@ export function progressCard() {
   const states: StepState[] = STEPS.map(() => ''), notes: string[] = STEPS.map(() => '');
   const draw = () => {
     el.innerHTML = `<div class="hd"><b></b><span>${((performance.now() - t0) / 1000).toFixed(1)}s</span></div><ol>${STEPS.map(
-      (s, i) => `<li class="${states[i]}"><i>${ICON[states[i]!]}</i>${s}${notes[i] ? `<small>${escape(notes[i]!)}</small>` : ''}</li>`).join('')}</ol>`;
+      (s, i) => `<li class="${states[i]}"><i>${ICON[states[i]!]}</i>${s}${notes[i] ? `<small>${escapeHtml(notes[i]!)}</small>` : ''}</li>`).join('')}</ol>`;
     el.querySelector('b')!.textContent = headline;
   };
   let headline = '收藏中…';
@@ -303,8 +304,4 @@ export function notice(title: string, text: string, acts: NoticeAct[] = []): HTM
   el.querySelector('.x')!.addEventListener('click', () => el.remove());
   dock().appendChild(el);
   return el;
-}
-
-function escape(s: string): string {
-  return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 }
