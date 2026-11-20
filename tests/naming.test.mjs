@@ -17,4 +17,5 @@ test('收藏文件夹名：去掉非法字符、截断标题、空标题不留�
 test('笔记文件名：去掉非法字符和双链特殊字符，空标题有兜底', () => {
   assert.equal(noteName('A/B: [草稿] #1 ^x|y'), 'A B 草稿 1 x y.md');
   assert.equal(noteName(''), 'ChatGPT 回答.md');
+  assert.equal(noteName('', 'Claude'), 'Claude 回答.md', '没有标题时按站名起名');
 });

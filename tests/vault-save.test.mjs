@@ -426,3 +426,23 @@ test('传图续期保护长任务；没有时间戳的旧版暂存会回收', as
     assert.deepEqual(await s.read(b.name), { 'note.md': 'ACTIVE_MD', 'answer-01.png': 'ACTIVE' });
   } finally { Date.now = clock; }
 });
+
+test('上次没写完的收藏恢复不了（日志里的文件夹句柄一直不回）：到时报错、日志留着，后面的收藏不被堵死', async () => {
+  const s = storage();
+  const dead = { getDirectoryHandle: () => new Promise(() => {}), removeEntry: () => new Promise(() => {}) };
+  s.values.set('pending-write', { dir: dead, name: '2026-11-12 没写完', existed: true, before: [] });
+  globalThis.__recoverLimit = 50;
+  try {
+    const t0 = Date.now();
+    await assert.rejects(saveCollection(s.dir, 'A', '2026-11-12 标题', files('A')), /恢复上次没写完的收藏时，文件夹 0\.05 秒没回应，这次没写进 Vault/);
+    await assert.rejects(saveCollection(s.dir, 'B', '2026-11-12 另一条', files('B')), /恢复上次没写完的收藏/);
+    assert.ok(Date.now() - t0 < 2000, '两次都该很快停下，不排队卡住');
+    assert.equal(s.values.has('pending-write'), true, '恢复不了时日志要留着');
+    assert.equal(s.dirs.size, 0, '没恢复好之前不写新收藏');
+    // 日志没了（恢复好了）之后照常能存
+    s.values.delete('pending-write');
+    assert.equal((await saveCollection(s.dir, 'A', '2026-11-12 标题', files('A'))).name, '2026-11-12 标题');
+  } finally {
+    delete globalThis.__recoverLimit;
+  }
+});

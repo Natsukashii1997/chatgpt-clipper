@@ -9,19 +9,22 @@ const content = readFileSync(new URL('../src/entrypoints/content.ts', import.met
 const capture = content.slice(content.indexOf('interface ThreadAnswer'), content.indexOf('/** 整段收藏里的一条回答'));
 const sendStart = content.indexOf('async function send(');
 const send = content.slice(sendStart, content.indexOf('\n}', sendStart) + 2);
+const askStart = content.indexOf('async function ask(');
+const ask = content.slice(askStart, content.indexOf('\n}', askStart) + 2);
 const compile = code => stripTypeScriptTypes(code);
 
 async function collect(fail, code, downloadsFail = false) {
   const messages = [], finished = [], steps = [];
   const browser = { runtime: { id: 'synthetic', async sendMessage(msg) {
     messages.push(msg);
+    if (`hang:${msg.type}` === fail) return new Promise(() => {});
     if (msg.type === fail) return { ok: false, error: `注入失败：${fail}`, code };
     if (msg.type === 'thread-begin') return { ok: true, folder: '2026-11-12 整段', job: 'JOB', path: 'Vault/2026-11-12 整段' };
     if (msg.type === 'download') return downloadsFail ? { ok: false, error: '下载失败' } : { ok: true, ids: [messages.length] };
     return { ok: true };
   } } };
-  const run = runInNewContext(compile(`${capture}\n${send}\ncaptureThread;`), {
-    browser, console: { error() {} }, Date,
+  const run = runInNewContext(compile(`${capture}\n${send}\n${ask}\ncaptureThread;`), {
+    browser, console: { error() {} }, Date, Promise, setTimeout, clearTimeout, saveLimit: () => 40,
     progressCard: () => ({ title() {}, step: (...v) => steps.push(v), finish: (...v) => finished.push(v) }),
     readThread: async visit => {
       await visit({ role: 'user', el: {} }, 1);
@@ -30,7 +33,7 @@ async function collect(fail, code, downloadsFail = false) {
       return { count: 3, missed: 0 };
     },
     userText: () => '合成问题', nextFrame: async () => {},
-    readAnswer: async () => ({ id: 'A', png: 'data:image/png;base64,QQ==', height: 1, body: '合成回答', pdf: {} }),
+    readAnswer: async () => ({ id: 'A', png: 'data:image/png;base64,QQ==', height: 1, body: '合成回答', pdf: {}, lost: [] }),
     location: { origin: 'https://chatgpt.com', pathname: '/c/synthetic' }, document: { title: '合成对话' },
     noteName: () => 'note.md', folderName: () => '2026-11-12 整段', clipHash: () => '#A',
     buildThreadNote: () => '合成笔记', pdfAction: () => ({}), SITE_NAME: 'ChatGPT', openLink() {},
@@ -47,6 +50,16 @@ for (const stage of ['thread-file', 'thread-end']) {
     assert.equal(finished.at(-1)[0], false);
     assert.match(finished.at(-1)[1], /已下载/);
     assert.match(finished.at(-1)[2].sub, new RegExp(`注入失败：${stage}.*3 个文件`));
+  });
+}
+
+for (const stage of ['thread-begin', 'thread-file', 'thread-end']) {
+  test(`${stage} 后台一直不回话：到时停下，退回下载，写明没回话，不卡在「入库」`, async () => {
+    const { messages, finished } = await collect(`hang:${stage}`);
+    assert.deepEqual(messages.filter(m => m.type === 'download').map(m => m.files[0].name), ['note.md', 'answer-01.png', 'answer-02.png']);
+    assert.equal(messages.filter(m => m.type === 'thread-cancel').length, stage === 'thread-begin' ? 0 : 1);
+    assert.equal(finished.at(-1)[0], false);
+    assert.match(finished.at(-1)[2].sub, /后台 0\.0[48] 秒没回话.*3 个文件/);
   });
 }
 

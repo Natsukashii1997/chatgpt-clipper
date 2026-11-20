@@ -15,6 +15,8 @@ export interface Snapshot {
   height: number;
   nodes: number;
   ms: number;
+  /** 导不出画面、在长图里留了空白的 canvas 个数（被跨域内容污染过的画布） */
+  blanks: number;
 }
 
 export interface SnapshotOptions {
@@ -60,6 +62,7 @@ export function takeSnapshot(el: HTMLElement, opts: SnapshotOptions = {}): Snaps
     const clone = el.cloneNode(true) as HTMLElement;
     const src = [el, ...el.querySelectorAll('*')], dst = [clone, ...clone.querySelectorAll('*')];
     const expand: HTMLElement[] = [], margins = new Map<Element, number>();
+    let blanks = 0;
     src.forEach((e, i) => {
       const cs = getComputedStyle(e);
       let css = st.css(e);
@@ -81,7 +84,7 @@ export function takeSnapshot(el: HTMLElement, opts: SnapshotOptions = {}): Snaps
         img.setAttribute('src', e.toDataURL());
         img.setAttribute('style', css);
         d.replaceWith(img);
-      } catch { /* 留空 */ }
+      } catch { blanks++; /* 留空，算进「没取到的图」 */ }
       // 只渲染了一部分的长代码：换成读全时复制下来的行，占位块一起去掉
       const lines = opts.codeLines?.get(e);
       if (lines) d.replaceChildren(...lines);
@@ -102,7 +105,7 @@ export function takeSnapshot(el: HTMLElement, opts: SnapshotOptions = {}): Snaps
     const root = document.createElement('div');
     root.setAttribute('style', `width:${width}px;height:${height}px;overflow:hidden;background:${pageBackground()}`);
     root.appendChild(clone);
-    return { root, width, height, nodes: src.length, ms: Math.round(performance.now() - t0) };
+    return { root, width, height, nodes: src.length, ms: Math.round(performance.now() - t0), blanks };
   } finally {
     st.dispose();
   }
@@ -147,12 +150,19 @@ function measure(clone: HTMLElement, width: number): number {
 
 /** 图片和网页字体换成 data: 地址：SVG 当图片画时不加载任何外部资源，不换就是空白框、系统字体（M1 验收 P4、P5）。
  *  同源的直接取；跨域的（图片不带 CORS 头，内容脚本读不到）交给 fetchCrossOrigin（后台按 host_permissions 取）。
- *  取不到的留原样，长图照出 */
-export async function embedResources(snap: Snapshot, fetchCrossOrigin: (url: string) => Promise<string>): Promise<void> {
-  await Promise.all([embedImages(snap.root, fetchCrossOrigin), embedFonts(snap.root)]);
+ *  取不到的留原样，长图照出；返回没嵌进去的数量（图片里含导不出画面的 canvas），由调用方标黄，不再悄悄留空白框、换系统字体 */
+export interface Missed { images: number; fonts: number }
+export async function embedResources(snap: Snapshot, fetchCrossOrigin: (url: string) => Promise<string>): Promise<Missed> {
+  const [images, fonts] = await Promise.all([embedImages(snap.root, fetchCrossOrigin), embedFonts(snap.root)]);
+  return { images: images + snap.blanks, fonts };
 }
 
-async function embedImages(root: HTMLElement, fetchCrossOrigin: (url: string) => Promise<string>) {
+// 小图标不计入「没取到」：来源胶囊里的网站图标来自各家网站，插件没有权限取，M1 验收时已接受它留空（验收矩阵第 2 行）
+const ICON_MAX = 32;
+
+/** 返回没取到的图片张数（小图标不算） */
+async function embedImages(root: HTMLElement, fetchCrossOrigin: (url: string) => Promise<string>): Promise<number> {
+  let missed = 0;
   await Promise.all([...root.querySelectorAll('img')].map(async img => {
     const src = img.getAttribute('src');
     if (!src || src.startsWith('data:')) return;
@@ -160,12 +170,18 @@ async function embedImages(root: HTMLElement, fetchCrossOrigin: (url: string) =>
     img.removeAttribute('srcset');
     try {
       img.setAttribute('src', url.origin === location.origin ? await toDataUrl(url.href) : await fetchCrossOrigin(url.href));
-    } catch { /* 留空白框 */ }
+    } catch {
+      // 留空白框。宽高是做快照时写死的计算值
+      const w = parseFloat(img.style.width), h = parseFloat(img.style.height);
+      if (!(w <= ICON_MAX && h <= ICON_MAX)) missed++;
+    }
   }));
+  return missed;
 }
 
-// 只嵌回答里用到、页面上已加载的字体（KaTeX 一套 20 个，只用到其中几个）
-async function embedFonts(root: HTMLElement) {
+// 只嵌回答里用到、页面上已加载的字体（KaTeX 一套 20 个，只用到其中几个）。返回该嵌却没取到的字体文件数；
+// 样式表跨域、读不了规则的那些字体不在其内（不知道它们有没有用到）
+async function embedFonts(root: HTMLElement): Promise<number> {
   const unquote = (s: string) => s.trim().replace(/^["']|["']$/g, '');
   const weight = (v: string) => ({ '': '400', normal: '400', bold: '700' })[v] ?? v;
   const used = new Set<string>();
@@ -185,11 +201,13 @@ async function embedFonts(root: HTMLElement) {
         .then(data => `@font-face{font-family:"${fam}";font-weight:${w};font-style:${st};${range ? `unicode-range:${range};` : ''}src:url(${data})}`, () => ''));
     }
   }
-  const css = (await Promise.all(faces)).filter(Boolean).join('\n');
-  if (!css) return;
-  const style = document.createElement('style');
-  style.textContent = css;
-  root.prepend(style);
+  const got = (await Promise.all(faces)).filter(Boolean), css = got.join('\n');
+  if (css) {
+    const style = document.createElement('style');
+    style.textContent = css;
+    root.prepend(style);
+  }
+  return faces.length - got.length;
 }
 
 async function toDataUrl(url: string): Promise<string> {

@@ -142,6 +142,14 @@ async function collectCard(pg, ribbon) {
   return pg.locator(`clipper-dock .card[data-no="${no}"]`);
 }
 
+/** 改内容脚本等后台回话的限时（毫秒，0 恢复默认）：由后台往这个页面的内容脚本环境里设 __saveLimit，网页脚本够不到那里 */
+async function setSaveLimit(sw, pg, ms) {
+  await sw.evaluate(async ([url, ms]) => {
+    for (const tab of (await chrome.tabs.query({})).filter(t => t.url === url))
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, args: [ms], func: ms => { if (ms) globalThis.__saveLimit = ms; else delete globalThis.__saveLimit; } });
+  }, [pg.url(), ms]);
+}
+
 async function setVault(sw) {
   await sw.evaluate(async () => {
     const dir = await navigator.storage.getDirectory();
@@ -258,7 +266,9 @@ test('取 Vault 文件夹、查授权一直不回（2026-11-20 常浩真实 Chro
 
     // 后台别处卡住、一直不回话：页面自己到时停下（页面限时 1.5 秒，后台限时改长到 20 秒）
     await sw.evaluate(() => { self.__dirLimit = 20_000; });
-    await page.evaluate(() => { document.documentElement.dataset.clipperSaveLimit = '1500'; });
+    // 网页脚本改 <html data-clipper-save-limit> 不再管用（原来的测试开关，网页也能改）；限时只能在内容脚本自己的环境里改
+    await page.evaluate(() => { document.documentElement.dataset.clipperSaveLimit = '1'; });
+    await setSaveLimit(sw, page, 1500);
     n = await downloads();
     text = await collect();
     assert.match(text, /入库\s+超时/, text);
@@ -268,6 +278,7 @@ test('取 Vault 文件夹、查授权一直不回（2026-11-20 常浩真实 Chro
     assert.ok(await downloads() > n, '后台不回话时该退回下载');
   } finally {
     await page.evaluate(() => { delete document.documentElement.dataset.clipperSaveLimit; });
+    await setSaveLimit(sw, page, 0);
     await sw.evaluate(() => {
       if (self.__qp) FileSystemHandle.prototype.queryPermission = self.__qp;
       if (self.__gd) FileSystemDirectoryHandle.prototype.getDirectoryHandle = self.__gd;
@@ -355,6 +366,13 @@ test('自检：设置页显示版本和打包时间，「自检」列出设置�
     assert.doesNotMatch(out, /卡住|出错|不是同一版/, out);
     for (const step of ['读一条文字设置', '列出记录', '写一条记录：通', '取出文件夹：有', '查授权：granted', '查只读授权：granted', '读文件夹：通'])
       assert.equal(out.split(step).length - 1, 2, `设置页和后台都该有「${step}」\n${out}`);
+    assert.equal(out.match(/已收藏 \d+，/g)?.length, 2, `设置页自己看，两边都带已收藏条数\n${out}`);
+    // 后台只收 data: 地址的文件：别的地址不取、不下载
+    for (const msg of [{ type: 'download', folder: 'x', files: [{ name: 'a.svg', url: IMAGE_URL }] }, { type: 'save', id: 'x', folder: 'x', files: [{ name: 'a.md', url: IMAGE_URL }] }]) {
+      const res = await opt.evaluate(m => chrome.runtime.sendMessage(m), msg);
+      assert.equal(res.ok, false, JSON.stringify(res));
+      assert.match(res.error, /不是 data: 地址/, JSON.stringify(res));
+    }
   } finally {
     await opt.close();
   }
@@ -366,6 +384,9 @@ test('自检：设置页显示版本和打包时间，「自检」列出设置�
   assert.ok(diag.background.steps.some(s => s.step === '查授权' && s.out === 'granted'), JSON.stringify(diag));
   assert.ok(diag.background.page.steps.some(s => s.step === '读文件夹' && s.out === '通'), '后台自检该带上设置页上一次自检的结果');
   assert.doesNotMatch(JSON.stringify(diag), /卡住|出错/);
+  // 这个事件网页脚本也能触发：给页面的结果里没有已收藏条数（后台的、设置页留存的都没有）
+  assert.doesNotMatch(JSON.stringify(diag), /已收藏|共 \d+ 条/, JSON.stringify(diag));
+  assert.ok(diag.background.steps.some(s => s.step === '列出记录' && /^没写完的收藏 \d+，/.test(s.out)), JSON.stringify(diag));
 });
 
 test('标题变了（如命名规则调整）：只有插件写的文件就改成新名字；有用户自己的文件就原地覆盖、不改名', async () => {
@@ -555,6 +576,51 @@ test('回答没有标题时用提问当标题，最多 30 字（M1 验收 P12）
 });
 
 // Claude 网页版（M2）：tests/fixtures/claude-answer.html 照真实页面结构仿的一轮问答
+test('长图里有图片没取到：照样存，PNG 一步标黄、写明几张，笔记标 incomplete、不说改版；取不到的小图标不算', async () => {
+  const sw = ctx.serviceWorkers()[0];
+  await setVault(sw);
+  const notes = () => sw.evaluate(async () => {
+    const out = [];
+    for await (const [, h] of (await navigator.storage.getDirectory()).entries())
+      for await (const [f, fh] of h.entries()) if (f.endsWith('.md')) out.push(await (await fh.getFile()).text());
+    return out;
+  });
+  const add = (w, h) => page.locator('#media').evaluate((m, [w, h]) => {
+    const img = Object.assign(document.createElement('img'), { src: `https://example.org/lost-${w}.png`, width: w, height: h, className: 'lost-img' });
+    img.style.display = 'block';
+    m.append(img);
+  }, [w, h]);
+  try {
+    // 只有一个取不到的小图标（来源胶囊里的网站图标那种）：不标黄
+    await add(16, 16);
+    let card = await collectCard(page, `${ANSWER} clipper-ribbon button`), text = await card.innerText();
+    assert.match(text, /^已(收藏|更新)\n/, text);
+    assert.equal(await card.locator('li.warn').count(), 0, text);
+
+    await add(200, 100);
+    card = await collectCard(page, `${ANSWER} clipper-ribbon button`);
+    text = await card.innerText();
+    assert.match(text, /^已收藏，但可能不完整\n/, text);
+    assert.match(await card.locator('li.warn').innerText(), /^!\nPNG 文件\n\d+px · /);
+    assert.match(await card.locator('.loc.warn').innerText(), /^⚠️\s+长图里有 1 张图没取到\n其余部分已存好$/);
+    const n = (await notes()).find(t => t.includes('incomplete'));
+    assert.match(n, /\nincomplete: true\n---\n\n> \[!warning\] 可能不完整\n> 长图里有 1 张图没取到。\n\n/);
+  } finally {
+    await page.locator('.lost-img').evaluateAll(a => a.forEach(i => i.remove()));
+    await page.locator('clipper-dock .card').evaluateAll(cs => cs.forEach(c => c.remove()));
+    // 清掉文件夹和收藏记录，不影响后面的用例
+    await sw.evaluate(async () => {
+      const root = await navigator.storage.getDirectory();
+      for await (const [n] of root.entries()) await root.removeEntry(n, { recursive: true });
+      await new Promise((resolve, reject) => {
+        const open = indexedDB.open('chatgpt-clipper', 1);
+        open.onsuccess = () => { const tx = open.result.transaction('kv', 'readwrite'); tx.objectStore('kv').clear(); tx.oncomplete = resolve; tx.onerror = reject; };
+        open.onerror = reject;
+      });
+    });
+  }
+});
+
 describe('Claude 网页版', () => {
   const MSG = '[data-testid="assistant-message"]';
   const NOISE = '[data-cds="TurnStatus"], :has(> [data-testid="message-actions"])';
