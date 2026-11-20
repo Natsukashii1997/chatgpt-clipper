@@ -103,8 +103,8 @@ _Avoid_: 目标目录、根目录、Vault（Vault 是整个 Obsidian 库，这�
 **Obsidian 位置**（`where`，`loadWhere()`）：
 用户在设置页手填的「Vault 名/到 Vault 文件夹的路径」，只用来生成「在 Obsidian 里打开」的链接。
 
-**入库**：
-把一条收藏的文件写进 Vault 文件夹，四步里的最后一步。写不进时退回下载。
+**入库**（`saveSingle()`、`saveThread()`，结果是 `Outcome`）：
+把一条收藏的文件写进 Vault 文件夹，四步里的最后一步。结果只有三种：写进去了、收藏过但原文件夹被整理走了、没写进去退回下载。
 
 **退回下载**：
 入库失败时改用浏览器下载，把文件存到下载目录的 `chatgpt-clipper/` 下；没选 Vault 文件夹时只下载长图。
@@ -114,7 +114,7 @@ _Avoid_: 降级、兜底
 覆盖一条已有收藏之前先存下的改前副本。写到一半失败或后台被中断时，下次写入前按它恢复原样（**恢复**）。
 _Avoid_: 事务、回滚日志
 
-**暂存任务**（thread job，`ThreadJob`）：
+**暂存任务**（thread job，`ThreadJob`，`beginThread()` 开、`stageThreadFile()` 放、`endThread()` 提交、`cancelThread()` 丢）：
 一次整段收藏在后台的临时记录：长图一张一张送来先放在插件的本地数据库里，最后一步才整组写进 Vault。超过一天没动的会被回收。
 _Avoid_: 任务（PDF 分段也有个 job，是另一回事）、队列
 
