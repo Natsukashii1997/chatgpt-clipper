@@ -226,6 +226,52 @@ test('选了文件夹就写进去；同一条再收藏就覆盖；刷新后丝�
   assert.equal((await sw.evaluate(() => chrome.downloads.search({}))).length, 1, '写进 Vault 时不该再下载');
 });
 
+test('取 Vault 文件夹、查授权一直不回（2026-11-20 常浩真实 Chrome 里卡在「入库」、设置页停在「未选择」）：到时停下，写清卡在哪、退回下载、给「去授权」；设置页也写明', async () => {
+  const sw = ctx.serviceWorkers()[0];
+  await setVault(sw);
+  const collect = async () => (await collectCard(page, `${ANSWER} clipper-ribbon button`)).innerText();
+  const downloads = async () => (await sw.evaluate(() => chrome.downloads.search({}))).length;
+  // 查授权永远不回
+  const hang = () => { self.__qp ??= FileSystemHandle.prototype.queryPermission; FileSystemHandle.prototype.queryPermission = () => new Promise(() => {}); };
+  try {
+    // 后台限时 1.5 秒：写明读不出授权，退回下载
+    await sw.evaluate(hang);
+    await sw.evaluate(() => { self.__dirLimit = 1500; });
+    let n = await downloads(), text = await collect();
+    assert.match(text, /入库\s+授权失效/, text);
+    assert.match(text, /读不出文件夹「[^」]*」的授权（浏览器 1\.5 秒没回应），去设置页重新选一次文件夹/, text);
+    assert.match(text, /^已存到下载目录\n/, text);
+    assert.match(text, /\n去授权\n/, text);
+    assert.ok(await downloads() > n, '读不出授权时该退回下载');
+
+    // 后台别处卡住、一直不回话：页面自己到时停下（页面限时 1.5 秒，后台限时改长到 20 秒）
+    await sw.evaluate(() => { self.__dirLimit = 20_000; });
+    await page.evaluate(() => { document.documentElement.dataset.clipperSaveLimit = '1500'; });
+    n = await downloads();
+    text = await collect();
+    assert.match(text, /入库\s+超时/, text);
+    assert.match(text, /后台 1\.5 秒没回话，没存进 Vault/, text);
+    assert.match(text, /^已存到下载目录\n/, text);
+    assert.match(text, /\n重试\n/, text);
+    assert.ok(await downloads() > n, '后台不回话时该退回下载');
+  } finally {
+    await page.evaluate(() => { delete document.documentElement.dataset.clipperSaveLimit; });
+    await sw.evaluate(() => { if (self.__qp) FileSystemHandle.prototype.queryPermission = self.__qp; delete self.__dirLimit; });
+  }
+
+  // 设置页：不停在「未选择」，写明读不出授权、让重新选
+  const opt = await ctx.newPage();
+  await opt.addInitScript(hang);
+  await opt.addInitScript(() => { self.__dirLimit = 1000; });
+  await opt.goto(`chrome-extension://${new globalThis.URL(sw.url()).host}/options.html`);
+  await opt.locator('#msg', { hasText: /\S/ }).waitFor({ timeout: 5_000 });
+  // 取到了文件夹、卡在查授权：显示文件夹名（测试里的私有存储根目录名字是空的）；连文件夹都取不到时显示「读不出」
+  assert.notEqual(await opt.locator('#cur').innerText(), '未选择');
+  assert.match(await opt.locator('#msg').innerText(), /^读不出这个文件夹的授权（浏览器一直没回应），点「选择文件夹」重新选一次。$/);
+  assert.ok(await opt.locator('#pick.primary').count(), '「选择文件夹」该突出显示');
+  await opt.close();
+});
+
 test('标题变了（如命名规则调整）：只有插件写的文件就改成新名字；有用户自己的文件就原地覆盖、不改名', async () => {
   const sw = ctx.serviceWorkers()[0];
   // 把这条回答的收藏记录改成早期格式（只存文件夹名），并按旧的截断名字建好文件夹

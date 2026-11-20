@@ -2,10 +2,18 @@
 
 当前阶段目标：一键导出 PDF 给 AI（FR-15），分三批：① 删「为什么存」② 导出 PDF ③ 常浩真实 Chrome 验收。（2026-11-10 常浩确认）已完成，2026-11-11 合并（#5）。
 
-更新：2026-11-19。FR-9 改成「插件更新后给已开页面补装脚本」（#12，常浩选「只补装」、同意加 scripting 和两个站的 host 权限），PR 待合并。下一步：常浩合并后，在真实 Chrome 里重新加载插件、不刷新已开的 ChatGPT 页面点丝带收藏一次。之前的生成图片修复（#9）、FR-15、FR-9 C 版已合并。
+更新：2026-11-20。#14（FR-9 只补装，`73ea2de`）合并后常浩真实 Chrome 收藏卡在「入库」；查出是取 Vault 文件夹、查授权一直不回，本 PR 给这两步和「入库」加限时、设置页写明，待合并。下一步：常浩合并后 `npm run zip`，在设置页重新选一次文件夹、收藏一次验收。注意：main 上 #14 之后还合了 Codex 的 #7（收藏存储并发与整组提交），下次打包会一起带上。
 
 
-## 插件更新后给已开页面补装脚本，不用刷新（FR-9「只补装」）（2026-11-19，Claude，常浩选「换个改法（只补装）」，又同意加 chatgpt.com、claude.ai 两个站的 host 权限；已提交、PR 待合并，未发布）
+## 入库卡死：取 Vault 文件夹、查授权和等后台回话都限时（2026-11-20，Claude，常浩真实 Chrome 收藏卡在「入库」、发来扩展卡片、后台控制台和设置页三张截图；已提交、PR 待合并，未发布）
+
+- 时间：开工 `2026-11-20`。★ 来由：#14 合并后常浩说「有问题，没办法入库了，卡死了」，刷新插件和页面后仍卡。Playwright 里 #14、#7 两份产物各收藏两次都正常，复现不出；常浩截图显示加载来源是主目录 `.output/chrome-mv3`、后台控制台空白、设置页停在「未选择」且状态提示为空（同库的 Obsidian 路径读得出）→ 判定卡在 `loadDir()` / `queryPermission()`。
+- 改了哪些文件：`src/lib/vault.ts`（新 `findDir()`：取文件夹 + 查授权限时 5 秒，到时 `state: 'stuck'`；`DirState` 加 `'stuck'`）；`src/entrypoints/background.ts`（入库和整段收藏改用 `findDir()`，`stuck` 时回 `no-permission` 并写明读不出授权）；`src/entrypoints/content.ts`（等后台回「入库」限时 60 秒，到时标「超时」、退回下载、给「重试」）；`src/entrypoints/options/main.ts`（设置页用 `findDir()`，`stuck` 时写明、突出「选择文件夹」）；`tests/snapshot.test.mjs`（新用例）；`docs/PRD.md` FR-5；`docs/LESSONS.md` L-25；本文件。
+- 测试：见 PR；证据目录 `~/Library/Application Support/chatgpt-clipper/evidence/2026-11-20-vault-hang/`（`red-old-code.txt` 旧代码下进度卡 30 秒没收尾，`green-new-code.txt`，`full-*.txt`）。
+- 验证：Playwright Chromium（无头），用永不返回的 `queryPermission` 模拟；没在常浩的真实 Chrome 里试。
+- 遗留：为什么常浩的 Chrome 里取文件夹或查授权不返回，没查清；先请常浩在设置页重新选一次文件夹，好了就说明是旧句柄坏了。
+
+## 插件更新后给已开页面补装脚本，不用刷新（FR-9「只补装」）（2026-11-19，Claude，常浩选「换个改法（只补装）」，又同意加 chatgpt.com、claude.ai 两个站的 host 权限；已合并 PR #14（`73ea2de`），主目录已打包）
 
 - 时间：开工 `2026-11-19 16:07`。★ 来由：积压清单组 7（全局 G-35），碰到 FR-9 已定内容，按第 15 节问过（#12）：常浩选「只补装，补装失败仍提醒刷新，第一次升级的两条丝带接受」。
 - 改了哪些文件：`src/entrypoints/background.ts`（`runtime.onInstalled` 安装、更新时按 `PAGES` 查已开标签页，`scripting.executeScript` 补装 `content-scripts/content.js`，失败的只记日志）；`src/entrypoints/content.ts`（`main(ctx)`：新的一份启动时 WXT 让旧的作废，旧的断开监听、清计时、收起自己的 `[data-clipper-ui]`；选区监听改用 `ctx.addEventListener`）；`src/lib/messages.ts`（`PAGES` 一处定义，内容脚本和后台共用）；`wxt.config.ts`（加 `scripting` 和两个站的 host 权限，注释写明来由）；`tests/snapshot.test.mjs`（浏览器带真重载开关；新用例「插件更新或重新加载后，已开的页面不用刷新…」；原兜底用例改名、取最新服务进程）；`docs/PRD.md` FR-9 末句；`docs/LESSONS.md` L-13、L-21 补充，新增 L-24；`README.md` 权限表；`public/安装说明.txt`「更新」一段。

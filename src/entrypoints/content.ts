@@ -142,6 +142,8 @@ async function markSaved(list: Ribbon[]) {
 }
 
 const busy = new WeakSet<HTMLElement>();
+/** 「入库」最多等后台多久：写文件平常几秒内完成，留足余量给特别长的长图 */
+const SAVE_LIMIT = 60_000;
 
 // 只收选中段落时，没选中的部分打上这个属性，长图和笔记都去掉，收完清掉
 const CUT = 'data-clipper-cut';
@@ -225,7 +227,14 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blo
     if (files.length) {
       card.step(3, 'on');
       const folder = `${folderName(title, started)}${blocks ? '（节选）' : ''}`;
-      const res = (await browser.runtime.sendMessage({ type: 'save', id, folder, files } satisfies Request).catch((e: Error) => ({ ok: false, error: e.message }))) as Response | undefined;
+      // 后台一直不回话也不卡在「入库」（L-13）：到时按失败处理、退回下载。测试里可以在 <html data-clipper-save-limit> 改小
+      const limit = Number(document.documentElement.dataset.clipperSaveLimit) || SAVE_LIMIT;
+      let timer = 0, late = false;
+      const res = (await Promise.race([
+        browser.runtime.sendMessage({ type: 'save', id, folder, files } satisfies Request).catch((e: Error) => ({ ok: false, error: e.message })),
+        new Promise(r => { timer = window.setTimeout(() => { late = true; r({ ok: false, error: `后台 ${limit / 1000} 秒没回话，没存进 Vault` }); }, limit); }),
+      ])) as Response | undefined;
+      clearTimeout(timer);
       if (res?.ok) {
         savedTo = res.path ?? '';
         note = res.moved ? '已收藏过' : res.updated ? '已更新' : '已存入';
@@ -241,7 +250,7 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blo
         const noVault = fix === 'no-folder', png = files.filter(f => f.name === 'answer.png');
         const dl = noVault && png.length ? png : files;
         if (noVault) card.step(3, 'bad', '无 Obsidian');
-        else fail(3, '', new Error(res?.error ?? '后台无响应'), fix === 'no-permission' ? '授权失效' : '失败');
+        else fail(3, '', new Error(res?.error ?? '后台无响应'), fix === 'no-permission' ? '授权失效' : late ? '超时' : '失败');
         try {
           firstId = (await send({ type: 'download', folder, files: dl })).ids?.[0] ?? 0;
           got = dl === png ? '长图' : '文件';
