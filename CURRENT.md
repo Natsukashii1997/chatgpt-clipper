@@ -5,6 +5,14 @@
 更新：2026-11-20。入库卡死已在常浩真实 Chrome 里修好并验收：根因是 Chrome 升到 158 重启后，存着的文件夹句柄上查授权、读文件夹都不回（L-26）；常浩重装插件、重新选文件夹后恢复，11:43 一条收藏写进了 Vault。代码这边补了限时中止、重选文件夹不被卡、查授权不回改试读、版本与自检（PR #17，`9a1e82a`，已合并）。下一步：无待办；移除插件时清掉的「已收藏」记录（70 条）不恢复，旧回答再收藏会新建文件夹。
 
 
+## 推送前钩子：从 worktree 推送不再把测试的 git 操作落到本仓库（2026-11-20，Claude，常浩回「开工，全部可合并」；已提交、PR 见下、无需发布）
+
+- 时间：开工 `2026-11-20 12:25`。★ 来由：#16 装的推送前钩子（骨架 0.4.0）从 worktree 推送时，git 把本仓库的位置（`GIT_DIR`）带进钩子，钩子跑的 `tests/hooks.test.mjs` 在临时目录建仓库、提交、推送都继承了它：推送的分支多出测试提交，主目录变成裸仓库，测试却全过。#16 合并时没带修复；本仓库钩子 12:2x 前已停用，检查时没中招（`core.bare=false`，无测试提交）。
+- 改了哪些文件：`scripts/hooks/pre-push`（`cd` 之后 `unset $(git rev-parse --local-env-vars)`；本项目定制的 `TESTS` 不动）、`tests/hooks.test.mjs`（换成骨架 0.4.1 版本：自己的 git 调用不继承这些变量，新增一条从 worktree 真推的用例）。和 my-skills#116 一致。
+- 测试：本 worktree 里 `sh scripts/hooks/pre-push` 退出码 0（`通用规则检查通过`，`ℹ pass 49` / `ℹ fail 0`）；`node --test tests/hooks.test.mjs` `ℹ pass 4` / `ℹ fail 0`；全量 `npm run build && npm test` 退出码 0，`ℹ pass 97` / `ℹ fail 0`。证据：`~/Library/Application Support/agent-kit/evidence/2026-11-20-pre-push-hook-gitdir/`。
+- 验证环境：本机真实 worktree。合并、主目录更新后装回 `git config core.hooksPath scripts/hooks`，再从 worktree `git push --dry-run` 一次，看分支提交数、`core.bare`、有没有测试提交。
+- 本轮新坑：无（跨项目的坑，已向常浩提全局坑提案，未写入）。
+
 ## 入库卡死续：定位到句柄失效，限时连带中止、查授权不回改试读、设置页加版本与自检（2026-11-20，Claude，常浩说「还是不行…你来接手…必须修复这个问题」；已合并 PR #17（`9a1e82a`），未发布）
 
 - 时间：开工 `2026-11-20 10:50`（约，接手时未用 `date` 记录，按会话时间）。★ 来由：#15 合并、打包后常浩仍入不了库，要求在本会话接手修好。
