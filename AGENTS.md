@@ -1,25 +1,28 @@
 # ChatGPT 回答收藏器（chatgpt-clipper） 协作约定（Codex / Claude 必读）
 
-Chrome 桌面版 MV3 插件，常浩自用：在 ChatGPT 网页上一键把某条回答以长图 PNG + 离线 HTML + Markdown 笔记原样存进 Obsidian。进入顺序：本文件 → [CURRENT.md](CURRENT.md)（当前状态与唯一下一步）。需求以 [docs/PRD.md](docs/PRD.md) 为准。所有面向用户的文字用简体中文。本文件只放怎么开始和做什么事之前读哪份；操作细节在 [docs/OPERATIONS.md](docs/OPERATIONS.md)，按需读对应一节。
+Chrome 桌面版 MV3 插件，常浩自用：在 ChatGPT 或 Claude 网页上一键把某条回答以长图 PNG + Markdown 笔记原样存进 Obsidian（离线 HTML 已于 2026-11-02 取消，见 PRD FR-3），另可只收选中段落、收整段对话、导出 PDF。进入顺序：本文件 → [CURRENT.md](CURRENT.md)（当前状态与唯一下一步）。需求以 [docs/PRD.md](docs/PRD.md) 为准。所有面向用户的文字用简体中文。本文件只放怎么开始和做什么事之前读哪份；操作细节在 [docs/OPERATIONS.md](docs/OPERATIONS.md)，按需读对应一节。
 
 ## 做什么事之前读哪份
 
 | 要做的事 | 先读 |
 |---|---|
 | 改需求、加功能 | [docs/PRD.md](docs/PRD.md) |
+| 读代码、起名字、写文档时碰到项目里的专有说法 | [GLOSSARY.md](GLOSSARY.md)（丝带、进度卡、节选、整段、指纹、块……只用里面的叫法） |
+| 改界面、文案、交互、已有行为 | [docs/DECIDED.md](docs/DECIDED.md)：登记过的先单独问常浩；没登记不等于没定 |
 | 改回答定位、捕获、快照逻辑 | [docs/recon/](docs/recon/) 里最新的侦察记录 |
 | 排障、改脚本、装 launchd 或定时任务 | 先 `grep -n 关键词 docs/LESSONS.md`，再搜全局坑 `/Users/nat/Documents/ChatGPT/个人/work/agent-kit/LESSONS.md` |
 | 开需求、拆任务、实现、审查 | 下面「Agent skills」一节 |
 | 写交接、验收别人的交接 | [docs/templates/handoff.md](docs/templates/handoff.md) 骨架；[OPERATIONS](docs/OPERATIONS.md)「交接写法」「报告与验收」 |
 | 做 M1 验收、看哪类没过 | [docs/acceptance/M1-验收矩阵.md](docs/acceptance/M1-验收矩阵.md) |
 | 打包发给别人 | [OPERATIONS](docs/OPERATIONS.md)「打包发给别人」、`public/安装说明.txt` |
+| 查以前某一轮做了什么 | [CURRENT.md](CURRENT.md) 只留近期几节，更早的在 [docs/history/](docs/history/) |
 
 项目长出接口、样式、发布等文档后，在这张表里加一行。
 
 ## 分工
 
 - 以用户每轮明确授权的范围为准；授权外的不做。
-- 一次只做一件授权的事；范围外的问题记进交接，不顺手修。
+- 一次只做一件授权的事；范围外发现的问题按全局指令「代码库归你」一节（`~/.claude/CLAUDE.md` 第 3 节）处理：相关的顺手修、交付时分「要求的」「顺手改的」两栏列出；会改变已有行为或碰已定内容的先问；不相关的记进交接。
 - 并行的会话各开独立 worktree，不在同一目录改代码；做不到时照全局坑 G-04，只提交自己的改动。
 
 ## 运行
@@ -35,8 +38,12 @@ git config core.hooksPath scripts/hooks   # 装提交、推送前的必经检查
 ```
 AGENTS.md            入口（本文件）
 CURRENT.md           当前状态与唯一下一步；每轮交接写在顶部
+GLOSSARY.md          术语表：项目里的专有说法和代码里对应的名字
+README.md            构建、加载、权限、代码结构（src/ 各文件做什么）
 docs/PRD.md          需求（v2，开发基线）
 docs/
+  DECIDED.md         已定内容登记表（常浩选定、验收过的界面和行为）
+  history/           CURRENT.md 归档出去的旧交接
   recon/             ChatGPT、Claude 页面结构侦察记录（截图在证据目录，不入库）
   reference/gpt-prd-v1/  GPT 起草的 v1 PRD 原文，只作参考，不是需求基线
   agents/            Matt Pocock 技能读的约定：issue 看板、分流标签、领域文档

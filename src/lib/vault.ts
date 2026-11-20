@@ -98,6 +98,7 @@ export const getSaved = async (id: string): Promise<Saved | undefined> => {
 
 // 所有标签页共用后台的队列，保护「查目录 → 分配名字 → 写入 → 记索引」；失败不堵住下一次收藏。
 let writing: Promise<unknown> = Promise.resolve();
+// 恢复也限时（见 recover）：它不结束的话，排在后面的收藏全都跟着卡
 function serial<T>(run: () => Promise<T>, restore = true): Promise<T> {
   const next = writing.then(async () => { if (restore) await recover(); return run(); });
   writing = next.catch(() => undefined);
@@ -116,7 +117,16 @@ interface Pending {
   committed?: boolean;
 }
 
-async function recover() {
+/** 恢复上次没写完的收藏。整个过程限时：日志里存的文件夹句柄可能已经失效、读写它一直不回（L-26 那种），
+ *  到时抛 Stuck、日志留着，这次收藏按失败退回下载，不让写入队列一直卡住。测试里用 self.__recoverLimit 改小 */
+function recover(): Promise<void> {
+  const ms = (globalThis as { __recoverLimit?: number }).__recoverLimit ?? 15_000;
+  return within('恢复上次没写完的收藏时，文件夹', ms, replay()).catch((e: unknown) => {
+    throw e instanceof Stuck ? new Stuck(`${e.message}，这次没写进 Vault；去设置页点「自检」看卡在哪一步`) : e;
+  });
+}
+
+async function replay() {
   const p = await idb<Pending | undefined>('readonly', s => s.get(PENDING));
   if (!p) return;
   if (p.committed) {
@@ -353,7 +363,7 @@ export async function findDir(): Promise<{ dir?: FileSystemDirectoryHandle; stat
 }
 
 /** 自检（设置页「自检」、页面上的 clipper-diag 事件）：入库要走的每一步各试一次，各限时 3 秒，报通不通、用了多久。
- *  只报状态和数量，不带文件夹名、收藏内容。最后一步只查一个不存在的子文件夹，不写任何东西 */
+ *  只报状态和数量，不带文件夹名、收藏内容（回给网页那边时后台再去掉已收藏条数）。最后一步只查一个不存在的子文件夹，不写任何东西 */
 export interface DiagStep { step: string; ms: number; out: string }
 export async function diagnose(): Promise<DiagStep[]> {
   const steps: DiagStep[] = [], LIMIT = 3_000;

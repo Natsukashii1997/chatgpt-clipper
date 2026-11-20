@@ -16,9 +16,9 @@ export function folderName(title: string, d: Date): string {
   return `${beijingTime(d).date}${safe ? ` ${safe}` : ''}`;
 }
 
-/** 笔记文件名：「标题.md」；另去掉 Obsidian 双链里有特殊含义的 # ^ [ ] */
-export function noteName(title: string): string {
-  return `${safeName(title).replace(/[#^[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60).trim() || 'ChatGPT 回答'}.md`;
+/** 笔记文件名：「标题.md」；另去掉 Obsidian 双链里有特殊含义的 # ^ [ ]。没有标题时叫「<站名> 回答.md」 */
+export function noteName(title: string, site = 'ChatGPT'): string {
+  return `${safeName(title).replace(/[#^[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60).trim() || `${site} 回答`}.md`;
 }
 
 /** 去掉文件名里不允许的字符和开头的点 */

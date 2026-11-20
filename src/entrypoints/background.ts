@@ -1,9 +1,10 @@
-import { BUILD, DOWNLOAD_ROOT, PAGES, PART_CHARS, type PrintPart, type Request, type Response } from '@/lib/messages';
+import { BUILD, DOWNLOAD_ROOT, PAGES, PART_CHARS, type DownloadFile, type PrintPart, type Request, type Response } from '@/lib/messages';
 import { cancelThread, diagnose, findDir, loadPageDiag, finishThread, getSaved, loadWhere, obsidianUrl, saveCollection, threadFolder, writeThreadFile } from '@/lib/vault';
 
 export default defineBackground(() => {
-  browser.runtime.onMessage.addListener((msg: Request, _sender, reply: (r: Response) => void) => {
-    handle(msg).then(reply, (e: Error) => reply({ ok: false, error: e.message }));
+  browser.runtime.onMessage.addListener((msg: Request, sender, reply: (r: Response) => void) => {
+    // 插件自己的页面（设置页）发来的才算自己人；内容脚本发来的，sender.url 是网页地址
+    handle(msg, !!sender.url?.startsWith(browser.runtime.getURL(''))).then(reply, (e: Error) => reply({ ok: false, error: e.message }));
     return true;
   });
   browser.runtime.onInstalled.addListener(({ reason }) => {
@@ -22,7 +23,7 @@ async function reinject() {
   }
 }
 
-async function handle(msg: Request): Promise<Response> {
+async function handle(msg: Request, own = false): Promise<Response> {
   if (msg.type === 'thread-cancel') {
     await cancelThread(msg.job);
     return { ok: true };
@@ -38,16 +39,16 @@ async function handle(msg: Request): Promise<Response> {
       return { ok: true, folder: r.name, job: r.job, path: `${dir.name}/${r.name}`, updated: r.updated, moved: r.moved };
     }
     if (msg.type === 'thread-file') {
-      await writeThreadFile(dir, msg.job, { name: msg.file.name, data: await (await fetch(msg.file.url)).blob() });
+      await writeThreadFile(dir, msg.job, { name: msg.file.name, data: await fileBlob(msg.file) });
       return { ok: true };
     }
     if (msg.type === 'thread-end') {
-      await finishThread(dir, msg.id, msg.folder, { name: msg.note.name, data: await (await fetch(msg.note.url)).blob() }, msg.images, msg.job);
+      await finishThread(dir, msg.id, msg.folder, { name: msg.note.name, data: await fileBlob(msg.note) }, msg.images, msg.job);
       const where = await loadWhere();
       return { ok: true, path: `${dir.name}/${msg.folder}`, open: where ? obsidianUrl(where, msg.folder, msg.note.name) : '' };
     }
     if (msg.type !== 'save') return { ok: false, error: '未知消息' };
-    const files = await Promise.all(msg.files.map(async f => ({ name: f.name, data: await (await fetch(f.url)).blob() })));
+    const files = await Promise.all(msg.files.map(async f => ({ name: f.name, data: await fileBlob(f) })));
     const r = await saveCollection(dir, msg.id, msg.folder, files);
     const where = await loadWhere(), note = files.find(f => f.name.endsWith('.md'))?.name;
     return { ok: true, path: `${dir.name}/${r.name}`, updated: r.updated, moved: r.moved,
@@ -59,8 +60,10 @@ async function handle(msg: Request): Promise<Response> {
   }
   if (msg.type === 'download') {
     const ids: number[] = [];
-    for (const f of msg.files)
+    for (const f of msg.files) {
+      dataOnly(f);
       ids.push(await browser.downloads.download({ url: f.url, filename: `${DOWNLOAD_ROOT}/${msg.folder}/${f.name}`, conflictAction: 'uniquify', saveAs: false }));
+    }
     return { ok: true, ids };
   }
   if (msg.type === 'show') {
@@ -78,13 +81,29 @@ async function handle(msg: Request): Promise<Response> {
     if (!html) return { ok: false, error: '要导出的内容没送到后台' };
     return { ok: true, ...(await printPdf(html, msg.name, msg.width)) };
   }
-  if (msg.type === 'diag') return { ok: true, diag: { build: BUILD, steps: await diagnose(), page: await loadPageDiag().catch(() => undefined) } };
+  if (msg.type === 'diag') {
+    // 页面上的 clipper-diag 事件网页脚本也能触发：不是设置页问的，就不带已收藏条数
+    const steps = await diagnose(), page = await loadPageDiag().catch(() => undefined);
+    return { ok: true, diag: own ? { build: BUILD, steps, page } : { build: BUILD, steps: steps.map(noCounts), page: page && { ...page, steps: page.steps.map(noCounts) } } };
+  }
   if (msg.type === 'options') {
     await browser.runtime.openOptionsPage();
     return { ok: true };
   }
   return { ok: false, error: '未知消息' };
 }
+
+/** 内容脚本送来的文件都是 data: 地址。别的地址不取、不下载：后台有图片域名的权限，不替别人取东西 */
+function dataOnly(f: DownloadFile) {
+  if (!f.url.startsWith('data:')) throw new Error(`文件「${f.name}」不是 data: 地址，没有处理`);
+}
+async function fileBlob(f: DownloadFile): Promise<Blob> {
+  dataOnly(f);
+  return (await fetch(f.url)).blob();
+}
+
+/** 自检结果里去掉已收藏条数（和总条数，减一下就是它） */
+const noCounts = <T extends { out: string }>(s: T): T => ({ ...s, out: s.out.replace(/共 \d+ 条：已收藏 \d+，/, '') });
 
 // 长图里的跨域图片：页面不给 CORS 头，内容脚本读不到，由后台按 host_permissions 取（用户 2026-11-02 同意只加这两个域名）。
 // 和 wxt.config.ts 的 host_permissions 保持一致；只取图片，不带任何东西出去

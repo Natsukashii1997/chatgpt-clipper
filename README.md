@@ -37,15 +37,23 @@ npm run compile                   # 类型检查
 ## 代码结构
 
 ```
-src/entrypoints/content.ts   挂按钮、串起快照 → 长图 → 转文字 → 写入（失败退回下载）
-src/entrypoints/background.ts 写 Vault、调 downloads、打开设置页
-src/entrypoints/options/     设置页：选 Vault 文件夹、重新授权、版本与自检
-src/lib/vault.ts             目录句柄的存取、授权状态、写一条收藏（同名加序号）
-src/lib/adapter.ts           ChatGPT 页面选择器（只此一处）
-src/lib/snapshot.ts          离线快照：内联计算样式 → SVG foreignObject → PNG
-src/lib/markdown.ts          回答 → Markdown 正文与整篇笔记（frontmatter、提问、长图）
-src/lib/ui.ts                书签丝带与进度卡（Shadow DOM）
-src/lib/naming.ts            北京时间与收藏文件夹命名
+src/entrypoints/content.ts   内容脚本：挂丝带、改版自检；单条 / 节选收藏（capture）和整段收藏（captureThread）的全流程：
+                             快照 → 长图 → 转文字 → 交给后台写入（失败退回下载）
+src/entrypoints/background.ts 后台：收消息写 Vault、调 downloads、取跨域图片、打印 PDF、插件更新后给已开页面补装脚本
+src/entrypoints/options/     设置页：选 Vault 文件夹、重新授权、填 Obsidian 位置、版本与自检
+src/entrypoints/print/       导出 PDF 用的打印页（后台在后台标签页里打开）
+src/lib/messages.ts          内容脚本 ↔ 后台的消息类型；挂哪些页面（PAGES）
+src/lib/adapter.ts           ChatGPT、Claude 两个站的页面选择器和页面标记（只此一处，改版只改这里）
+src/lib/snapshot.ts          离线快照：内联计算样式 → 内嵌图片字体 → SVG foreignObject → PNG
+src/lib/markdown.ts          回答 → Markdown 正文；读全长代码；整篇笔记（frontmatter、提问、长图）
+src/lib/thread.ts            整段收藏：从头到尾滚动，逐条读每一问每一答
+src/lib/jump.ts              跳回原回答：按笔记链接里的指纹找到那条回答
+src/lib/pdf.ts               导出 PDF：把快照副本排成打印页的 HTML，分段送后台
+src/lib/vault.ts             IndexedDB 存取、文件夹句柄与授权、已收藏清单、写一条收藏（写入日志与恢复）、整段收藏的暂存、自检
+src/lib/ui.ts                丝带、进度卡、提醒（Shadow DOM）
+src/lib/naming.ts            北京时间与收藏文件夹、笔记命名
+tests/snapshot.test.mjs      端到端测试（名字是历史遗留，不只测快照）：Playwright 带插件的 Chromium + 测试页，覆盖全部功能
+tests/vault-save.test.mjs    写入 Vault 的存储层测试（内存假文件系统）；thread-save 测整段收藏的调用链
 tests/fixtures/              自建的仿卡片测试页（无私人内容）
 scripts/icon.svg             插件图标源文件；改完运行 node scripts/make-icons.mjs 生成 public/icon/*.png
 ```

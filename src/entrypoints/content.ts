@@ -4,7 +4,7 @@ import { BUILD, PAGES, type DownloadFile, type FailCode, type Request, type Resp
 import { clipHash, jumpToClip } from '@/lib/jump';
 import { beijingTime, folderName, noteName } from '@/lib/naming';
 import { exportPdf, pdfAnswer, type PdfAnswer, type PdfDoc, type PdfRound } from '@/lib/pdf';
-import { embedResources, styler, takeSnapshot, toPng } from '@/lib/snapshot';
+import { embedResources, styler, takeSnapshot, toPng, type Missed } from '@/lib/snapshot';
 import { readThread } from '@/lib/thread';
 import { mountRibbon, notice, progressCard, STEPS, UI_ATTR, type Pdf, type Place, type RibbonState } from '@/lib/ui';
 
@@ -50,7 +50,7 @@ export default defineContentScript({
     observer.observe(document.body, { childList: true, subtree: true });
     scan();
     // 自检：页面上发一个 clipper-diag 事件，把这份脚本和后台的打包时间、后台入库各步通不通写到 <html data-clipper-diag>
-    //（只有状态和数量，没有文件夹名和收藏内容）。排查「卡在入库」用，后台 20 秒不回话也写明（L-26）
+    //（只有各步的状态，没有文件夹名、收藏内容和已收藏条数：网页脚本也能触发这个事件）。排查「卡在入库」用，后台 20 秒不回话也写明（L-26）
     ctx.addEventListener(document, 'clipper-diag', () => void (async () => {
       const res = (await Promise.race([
         browser.runtime.sendMessage({ type: 'diag' } satisfies Request).catch((e: Error) => ({ ok: false, error: e.message })),
@@ -151,8 +151,12 @@ async function markSaved(list: Ribbon[]) {
 }
 
 const busy = new WeakSet<HTMLElement>();
-/** 「入库」最多等后台多久：写文件平常几秒内完成，留足余量给特别长的长图 */
+/** 等后台回话最多多久：写文件平常几秒内完成，留足余量给特别长的长图。
+ *  测试里在内容脚本自己的环境里设 globalThis.__saveLimit 改小（和后台的 __dirLimit 同一种做法；网页脚本够不到这个环境） */
 const SAVE_LIMIT = 60_000;
+/** 取一张跨域图片最多等后台多久 */
+const IMAGE_LIMIT = 20_000;
+const saveLimit = () => (globalThis as { __saveLimit?: number }).__saveLimit ?? SAVE_LIMIT;
 
 // 只收选中段落时，没选中的部分打上这个属性，长图和笔记都去掉，收完清掉
 const CUT = 'data-clipper-cut';
@@ -169,6 +173,8 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blo
   const all = blocks && answerBlocks(el), id = blocks ? `${answerId}~${blocks.map(b => all!.indexOf(b)).join('-')}` : answerId;
   const card = progressCard();
   const files: DownloadFile[] = [], failed: string[] = [], warns: string[] = [];
+  // warns 里有改版自检没过的（长图太矮、笔记字太少）时为 true；只是图片、字体没嵌进不算改版
+  let redesign = false;
   // 改版自检：先量页面上的这条回答（节选量选中的块），结果明显比它少就照样存、标黄
   const parts = blocks ?? [el];
   const pageChars = parts.reduce((n, b) => n + answerChars(b), 0), pageHeight = Math.round(parts.reduce((n, b) => n + b.getBoundingClientRect().height, 0));
@@ -202,14 +208,15 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blo
       card.step(1, 'on');
       await nextFrame();
       try {
-        await embedResources(snap, fetchImage);
+        const lost = missedText(await embedResources(snap, fetchImage));
         pdfAns = pdfAnswer(snap);
         const png = await toPng(snap);
         clip.give(png);
         files.push({ name: 'answer.png', url: await blobToDataUrl(png) });
         const short = snap.height < pageHeight / 2;
-        if (short) warns.push(`长图只有页面高度的 ${Math.round((snap.height / pageHeight) * 100)}%`);
-        card.step(1, short ? 'warn' : 'ok', `${snap.height}px · ${(await clip.done()) ?'已复制' : '未复制'}`);
+        if (short) { redesign = true; warns.push(`长图只有页面高度的 ${Math.round((snap.height / pageHeight) * 100)}%`); }
+        warns.push(...lost);
+        card.step(1, short || lost.length ? 'warn' : 'ok', `${snap.height}px · ${(await clip.done()) ? '已复制' : '未复制'}`);
       } catch (e) {
         fail(1, 'PNG 文件', e);
       }
@@ -221,9 +228,9 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blo
       const body = answerToMarkdown(el, { exclude: skip, code: code ?? (await readCodeEditors(el)) });
       // 回答本身很短（不到 20 字）不比字数
       const chars = body.replace(/\s+/g, '').length, few = pageChars >= 20 && chars < pageChars / 2;
-      if (few) warns.push(chars ? `笔记只读到页面文字的 ${Math.round((chars / pageChars) * 100)}%` : '笔记没读到正文');
-      const md = buildNote({ url: `${location.origin}${location.pathname}${clipHash(answerId)}`, captured: started, title, question: answerQuestion(el), body, image: files.length > 0, warn: warns, excerpt: !!blocks });
-      files.unshift({ name: noteName(title), url: `data:text/markdown;charset=utf-8,${encodeURIComponent(md)}` });
+      if (few) { redesign = true; warns.push(chars ? `笔记只读到页面文字的 ${Math.round((chars / pageChars) * 100)}%` : '笔记没读到正文'); }
+      const md = buildNote({ url: `${location.origin}${location.pathname}${clipHash(answerId)}`, captured: started, title, question: answerQuestion(el), body, image: files.length > 0, warn: warns, redesign, excerpt: !!blocks });
+      files.unshift({ name: noteName(title, SITE_NAME), url: `data:text/markdown;charset=utf-8,${encodeURIComponent(md)}` });
       card.step(2, few ? 'warn' : 'ok', `${body.length} 字`);
     } catch (e) {
       fail(2, 'MD 文件', e);
@@ -236,14 +243,8 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blo
     if (files.length) {
       card.step(3, 'on');
       const folder = `${folderName(title, started)}${blocks ? '（节选）' : ''}`;
-      // 后台一直不回话也不卡在「入库」（L-13）：到时按失败处理、退回下载。测试里可以在 <html data-clipper-save-limit> 改小
-      const limit = Number(document.documentElement.dataset.clipperSaveLimit) || SAVE_LIMIT;
-      let timer = 0, late = false;
-      const res = (await Promise.race([
-        browser.runtime.sendMessage({ type: 'save', id, folder, files } satisfies Request).catch((e: Error) => ({ ok: false, error: e.message })),
-        new Promise(r => { timer = window.setTimeout(() => { late = true; r({ ok: false, error: `后台 ${limit / 1000} 秒没回话，没存进 Vault` }); }, limit); }),
-      ])) as Response | undefined;
-      clearTimeout(timer);
+      // 后台一直不回话也不卡在「入库」（L-13）：到时按失败处理、退回下载
+      const { res, late } = await ask({ type: 'save', id, folder, files });
       if (res?.ok) {
         savedTo = res.path ?? '';
         note = res.moved ? '已收藏过' : res.updated ? '已更新' : '已存入';
@@ -259,7 +260,7 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blo
         const noVault = fix === 'no-folder', png = files.filter(f => f.name === 'answer.png');
         const dl = noVault && png.length ? png : files;
         if (noVault) card.step(3, 'bad', '无 Obsidian');
-        else fail(3, '', new Error(res?.error ?? '后台无响应'), fix === 'no-permission' ? '授权失效' : late ? '超时' : '失败');
+        else fail(3, '', new Error(res?.error ? `${res.error}${late ? '，没存进 Vault' : ''}` : '后台无响应'), fix === 'no-permission' ? '授权失效' : late ? '超时' : '失败');
         try {
           firstId = (await send({ type: 'download', folder, files: dl })).ids?.[0] ?? 0;
           got = dl === png ? '长图' : '文件';
@@ -277,7 +278,7 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blo
       const warn = warns.length > 0 && note !== '已收藏过';
       card.finish(true, note === '已收藏过' ? '已收藏过' : warn ? '已收藏，但可能不完整' : note === '已更新' ? '已更新' : '已收藏', note === '已收藏过'
         ? { icon: '📁', head: name, sub: `原文件夹已不在「${dir}」里（可能整理走了），这次没有重写` }
-        : warn ? { icon: '⚠️', head: warns.join('；'), sub: '页面可能改版了，能存的部分已存好', warn, open }
+        : warn ? { icon: '⚠️', head: warns.join('；'), sub: redesign ? '页面可能改版了，能存的部分已存好' : '其余部分已存好', warn, open }
         : { icon: '📁', head: name, sub: [date, dir].filter(Boolean).join(' · '), open }, undefined, warn ? 0 : 8000, pdf);
     } else {
       setRibbon('err');
@@ -300,7 +301,7 @@ async function capture(el: HTMLElement, setRibbon: (s: RibbonState) => void, blo
   }
 }
 
-interface ThreadAnswer { id: string; png: string; height: number; body: string; pdf: PdfAnswer }
+interface ThreadAnswer { id: string; png: string; height: number; body: string; pdf: PdfAnswer; lost: string[] }
 type ThreadPart = { role: 'user'; text: string } | ({ role: 'assistant' } & (ThreadAnswer | { error: string }));
 let threading = false;
 
@@ -326,7 +327,9 @@ async function captureThread() {
         return;
       }
       try {
-        parts.push({ role: 'assistant', ...(await readAnswer(it.el)) });
+        const a = await readAnswer(it.el);
+        if (a.lost.length) warns.push(`第 ${k} 条：${a.lost.join('、')}`);
+        parts.push({ role: 'assistant', ...a });
       } catch (e) {
         const reason = e instanceof Error ? e.message : String(e);
         warns.push(`第 ${k} 条：${reason}`);
@@ -361,8 +364,8 @@ async function captureThread() {
     card.step(3, 'on');
     const id = `thread:${base}`, folder = `${folderName(title, started)}（整段）`;
     const pdf = pdfAction({ title: `${title}（整段）`, site: SITE_NAME, url: base, captured: started, rounds: pdfRounds, thread: true }, folder);
-    const begin = (await browser.runtime.sendMessage({ type: 'thread-begin', id, folder } satisfies Request)
-      .catch((e: Error) => ({ ok: false, error: e.message }))) as Response | undefined;
+    // 这几条消息也都限时（同单条收藏）：后台不回话就按失败退回下载，不卡在「入库」
+    const { res: begin } = await ask({ type: 'thread-begin', id, folder });
     let failure = begin?.ok ? undefined : begin;
     if (begin?.ok) {
       const [dir = '', ...rest] = (begin.path ?? '').split('/'), sub = rest.join('/'), date = sub.match(/^\d{4}-\d{2}-\d{2}/)?.[0] ?? '';
@@ -377,7 +380,8 @@ async function captureThread() {
           card.step(3, 'on', `${i + 1}/${images.length}`);
           await send({ type: 'thread-file', folder: begin.folder!, job: begin.job!, file });
         }
-        const end = await send({ type: 'thread-end', id, folder: begin.folder!, job: begin.job!, note, images: images.map(f => f.name) });
+        // 最后一条要把全部长图写进 Vault，多等一倍
+        const end = await send({ type: 'thread-end', id, folder: begin.folder!, job: begin.job!, note, images: images.map(f => f.name) }, saveLimit() * 2);
         const status = begin.updated ? '已更新' : '已存入', warn = warns.length > 0;
         card.step(3, 'ok', status);
         const open: Place['open'] = end.open ? { label: '在 Obsidian 里打开 ↗', href: end.open, run: () => openLink(end.open!) }
@@ -423,8 +427,8 @@ async function readAnswer(el: HTMLElement): Promise<ThreadAnswer> {
   // 快照和正文紧接着做（中间不等待），后面导出图片时回答的节点可能已被页面换掉
   const snap = takeSnapshot(el, { exclude: `[${UI_ATTR}]`, drop: NOISE, codeLines: new Map([...code].map(([e, c]) => [e, c.lines])) });
   const body = answerToMarkdown(el, { exclude: `[${UI_ATTR}]`, code });
-  await embedResources(snap, fetchImage);
-  return { id, png: await blobToDataUrl(await toPng(snap)), height: snap.height, body, pdf: pdfAnswer(snap) };
+  const lost = missedText(await embedResources(snap, fetchImage));
+  return { id, png: await blobToDataUrl(await toPng(snap)), height: snap.height, body, pdf: pdfAnswer(snap), lost };
 }
 
 /** 给回答里不含要收的块的部分打 CUT：从回答往下，含要收的块就往里走，不含就整棵打上 */
@@ -465,16 +469,34 @@ function openLink(url: string) {
   a.click();
 }
 
-async function send(msg: Request): Promise<Extract<Response, { ok: true }>> {
-  const res = (await browser.runtime.sendMessage(msg)) as Response | undefined;
+/** 发给后台、等回话，不成就抛错（同样限时，见 ask） */
+async function send(msg: Request, ms = saveLimit()): Promise<Extract<Response, { ok: true }>> {
+  const { res } = await ask(msg, ms);
   if (!res) throw new Error('后台无响应');
   if (!res.ok) throw new Error(res.error);
   return res;
 }
 
+/** 发给后台，限时等回话：后台一直不回（L-13、L-25）到时按失败算、late 为 true，调用方退回下载，不卡在「入库」 */
+async function ask(msg: Request, ms = saveLimit()): Promise<{ res: Response | undefined; late: boolean }> {
+  let timer: ReturnType<typeof setTimeout> | undefined, late = false;
+  const res = (await Promise.race([
+    browser.runtime.sendMessage(msg).catch((e: Error) => ({ ok: false, error: e.message })),
+    new Promise(r => { timer = setTimeout(() => { late = true; r({ ok: false, error: `后台 ${ms / 1000} 秒没回话` }); }, ms); }),
+  ])) as Response | undefined;
+  clearTimeout(timer);
+  return { res, late };
+}
+
+/** 长图里没嵌进去的东西，写给用户看的话（进度卡标黄、笔记标「可能不完整」） */
+function missedText(m: Missed): string[] {
+  return [m.images ? `长图里有 ${m.images} 张图没取到` : '', m.fonts ? `长图里有 ${m.fonts} 个字体没嵌进（换成了系统字体）` : ''].filter(Boolean);
+}
+
 /** 跨域图片交给后台取（内容脚本受页面 CORS 限制） */
 async function fetchImage(url: string): Promise<string> {
-  const res = (await browser.runtime.sendMessage({ type: 'image', url } satisfies Request)) as Response | undefined;
+  // 同样限时：后台不回话时这张图按没取到算（长图照出、标黄），不卡在「PNG 文件」一步
+  const { res } = await ask({ type: 'image', url }, Math.min(saveLimit(), IMAGE_LIMIT));
   if (!res?.ok || !res.dataUrl) throw new Error(res && !res.ok ? res.error : '图片取不到');
   return res.dataUrl;
 }
