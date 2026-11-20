@@ -52,7 +52,7 @@ src/lib/pdf.ts               导出 PDF：把快照副本排成打印页的 HTML
 src/lib/vault.ts             IndexedDB 存取、文件夹句柄与授权、已收藏清单、写一条收藏（写入日志与恢复）、整段收藏的暂存、自检
 src/lib/ui.ts                丝带、进度卡、提醒（Shadow DOM）
 src/lib/naming.ts            北京时间与收藏文件夹、笔记命名
-tests/snapshot.test.mjs      端到端测试（名字是历史遗留，不只测快照）：Playwright 带插件的 Chromium + 测试页，覆盖全部功能
+tests/e2e.test.mjs           端到端测试：Playwright 带插件的 Chromium + 测试页，覆盖全部功能
 tests/vault-save.test.mjs    写入 Vault 的存储层测试（内存假文件系统）；thread-save 测整段收藏的调用链
 tests/fixtures/              自建的仿卡片测试页（无私人内容）
 scripts/icon.svg             插件图标源文件；改完运行 node scripts/make-icons.mjs 生成 public/icon/*.png

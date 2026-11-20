@@ -1,4 +1,4 @@
-// 快照模块的端到端测试：Playwright 启动带插件的 Chromium，把固定测试页伪装成 chatgpt.com 打开，
+// 端到端测试（2026-11-20 前叫 snapshot.test.mjs，早已不只测快照）：Playwright 启动带插件的 Chromium，把固定测试页伪装成 chatgpt.com 打开，
 // 点「收藏」，检查下载下来的 PNG。测试页内容是编的（tests/fixtures/card-answer.html）。
 // 需要 Playwright 自带的 Chromium（正式版 Chrome 不支持命令行加载未打包插件）：npx playwright install chromium
 import { test, describe, before, after } from 'node:test';
