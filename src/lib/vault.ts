@@ -18,23 +18,48 @@ declare global {
 
 const DB = 'chatgpt-clipper', STORE = 'kv', KEY = 'vaultDir';
 
-function idb<T>(mode: IDBTransactionMode, run: (s: IDBObjectStore) => IDBRequest): Promise<T> {
+/** 浏览器一直不回话（不报错也不结束）：到时放弃，由调用方写明卡在哪、给出路 */
+export class Stuck extends Error {}
+
+// 等浏览器回话的每一步都限时（L-25、L-26）。读很快，5 秒；写可能带整张长图，30 秒。测试里用 self.__idbLimit 改小
+const idbLimit = (mode: IDBTransactionMode) => (globalThis as { __idbLimit?: number }).__idbLimit ?? (mode === 'readonly' ? 5_000 : 30_000);
+
+/** 给一步操作限时，到时抛 Stuck */
+function within<T>(what: string, ms: number, work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([work, new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Stuck(`${what} ${ms / 1000} 秒没回应`)), ms);
+  })]).finally(() => clearTimeout(timer));
+}
+
+// 到时不只是不等了，还要中止事务、关掉连接：卡住的读事务不结束，同一个库后面所有的写都排在它后面一起卡
+// （2026-11-20：读文件夹句柄卡住后，设置页重新选文件夹也存不进，L-26）
+function idb<T>(mode: IDBTransactionMode, run: (s: IDBObjectStore) => IDBRequest, ms = idbLimit(mode)): Promise<T> {
   return new Promise((resolve, reject) => {
+    let db: IDBDatabase | undefined, tx: IDBTransaction | undefined, late = false;
+    const timer = setTimeout(() => {
+      late = true;
+      try { tx?.abort(); } catch { /* 事务已结束 */ }
+      db?.close();
+      reject(new Stuck(`浏览器的本地数据库 ${ms / 1000} 秒没回应`));
+    }, ms);
     const open = indexedDB.open(DB, 1);
     open.onupgradeneeded = () => open.result.createObjectStore(STORE);
-    open.onerror = () => reject(open.error);
+    open.onerror = () => { clearTimeout(timer); reject(open.error); };
     open.onsuccess = () => {
-      const db = open.result, tx = db.transaction(STORE, mode);
+      db = open.result;
+      if (late) return db.close();
+      const t = tx = db.transaction(STORE, mode);
       let req: IDBRequest;
-      tx.oncomplete = () => { db.close(); resolve(req.result as T); };
-      tx.onabort = tx.onerror = () => { db.close(); reject(tx.error ?? new Error('收藏索引没有提交')); };
-      try { req = run(tx.objectStore(STORE)); }
-      catch (e) { tx.abort(); db.close(); reject(e); }
+      t.oncomplete = () => { clearTimeout(timer); db!.close(); resolve(req.result as T); };
+      t.onabort = t.onerror = () => { clearTimeout(timer); db!.close(); reject(t.error ?? new Error('收藏索引没有提交')); };
+      try { req = run(t.objectStore(STORE)); }
+      catch (e) { clearTimeout(timer); t.abort(); db.close(); reject(e); }
     };
   });
 }
 
-export const loadDir = () => idb<FileSystemDirectoryHandle | undefined>('readonly', s => s.get(KEY));
+export const loadDir = (ms?: number) => idb<FileSystemDirectoryHandle | undefined>('readonly', s => s.get(KEY), ms);
 
 // 收藏文件夹在 Obsidian 里的位置「Vault 名/在 Vault 里的路径」：浏览器不给完整路径，由用户在设置页填一次，
 // 用来生成在 Obsidian 里打开笔记的链接（2026-11-04 用户选定：点进度卡绿块打开，A 版）
@@ -51,10 +76,17 @@ export function obsidianUrl(where: string, folder: string, note: string): string
 
 /** 换成另一个文件夹时清掉「已收藏」清单（清单里的文件夹名只对原文件夹有效）；重选同一个文件夹不清 */
 export async function saveDir(h: FileSystemDirectoryHandle) {
-  const old = await loadDir();
-  if (old && !(await old.isSameEntry(h))) await idb('readwrite', s => s.delete(IDBKeyRange.bound(SAVED, `${SAVED}\uffff`)));
+  // 原来存着的读不出、比不了时（Stuck），按「没换文件夹」处理、照样存新的：重新选文件夹正是读不出时的出路，不能被它卡住（L-26）。
+  // 代价：这时如果真换了文件夹，清单没清，旧文件夹里收藏过的回答在新文件夹会显示「已收藏过」
+  let changed = false;
+  try {
+    const old = await loadDir(DIR_LIMIT);
+    changed = !!old && !(await within('比对原来的文件夹', DIR_LIMIT, old.isSameEntry(h)));
+  } catch (e) { if (!(e instanceof Stuck)) throw e; }
+  if (changed) await idb('readwrite', s => s.delete(IDBKeyRange.bound(SAVED, `${SAVED}\uffff`)));
   await idb('readwrite', s => s.put(h, KEY));
 }
+const DIR_LIMIT = 3_000;
 
 // 「已收藏」清单：回答指纹 → 收藏文件夹名、笔记文件名。不存正文。早期只存了文件夹名（字符串）
 const SAVED = 'saved:';
@@ -276,21 +308,52 @@ async function onlyOurs(sub: FileSystemDirectoryHandle, note?: string): Promise<
 }
 
 export type DirState = 'none' | 'stuck' | PermissionState;
-export async function dirState(dir?: FileSystemDirectoryHandle): Promise<DirState> {
-  return dir ? dir.queryPermission({ mode: 'readwrite' }) : 'none';
+
+/** 取出设置页存的文件夹并查授权。真实 Chrome 里这两步一直不回过（2026-11-20：入库一直转圈、设置页停在「未选择」），
+ *  两步合计限时 5 秒，到时算 'stuck'（取文件夹卡住时 dir 为空，并中止那次读），由调用方写明并让用户重新选文件夹。
+ *  测试里可以用 self.__dirLimit 改小 */
+export async function findDir(): Promise<{ dir?: FileSystemDirectoryHandle; state: DirState; waited: number }> {
+  const ms = (globalThis as { __dirLimit?: number }).__dirLimit ?? 5_000, t0 = performance.now();
+  try {
+    const dir = await loadDir(ms);
+    if (!dir) return { state: 'none', waited: ms };
+    try {
+      const left = Math.max(1, ms - (performance.now() - t0));
+      return { dir, state: await within('查授权', left, dir.queryPermission({ mode: 'readwrite' })), waited: ms };
+    } catch (e) {
+      if (!(e instanceof Stuck)) throw e;
+      return { dir, state: 'stuck', waited: ms };
+    }
+  } catch (e) {
+    if (!(e instanceof Stuck)) throw e;
+    return { state: 'stuck', waited: ms };
+  }
 }
 
-/** 取出设置页存的文件夹并查授权。真实 Chrome 里这两步一直不回过（2026-11-20：入库一直转圈、设置页停在「未选择」，原因未查清），
- *  限时 5 秒，到时算 'stuck'，由调用方写明并让用户重新选文件夹。测试里可以用 self.__dirLimit 改小 */
-export async function findDir(): Promise<{ dir?: FileSystemDirectoryHandle; state: DirState; waited: number }> {
-  const ms = (globalThis as { __dirLimit?: number }).__dirLimit ?? 5_000;
-  let dir: FileSystemDirectoryHandle | undefined, timer: ReturnType<typeof setTimeout> | undefined;
-  const state = await Promise.race([
-    (async () => dirState(dir = await loadDir()))(),
-    new Promise<'stuck'>(r => { timer = setTimeout(() => r('stuck'), ms); }),
-  ]);
-  clearTimeout(timer);
-  return { dir, state, waited: ms };
+/** 自检（设置页「自检」、页面上的 clipper-diag 事件）：入库要走的每一步各试一次，各限时 3 秒，报通不通、用了多久。
+ *  只报状态和数量，不带文件夹名、收藏内容。最后一步只查一个不存在的子文件夹，不写任何东西 */
+export interface DiagStep { step: string; ms: number; out: string }
+export async function diagnose(): Promise<DiagStep[]> {
+  const steps: DiagStep[] = [], LIMIT = 3_000;
+  const run = async <T>(step: string, work: () => Promise<T>, show: (v: T) => string): Promise<T | undefined> => {
+    const t0 = performance.now();
+    let out: string, v: T | undefined;
+    try { out = show(v = await work()); }
+    catch (e) { out = e instanceof Stuck ? `卡住：${e.message}` : `出错：${e instanceof Error ? e.message : String(e)}`; }
+    steps.push({ step, ms: Math.round(performance.now() - t0), out });
+    return v;
+  };
+  await run('读一条文字设置', () => idb<string | undefined>('readonly', s => s.get(WHERE), LIMIT), v => (v ? '有' : '空'));
+  await run('列出记录', () => idb<IDBValidKey[]>('readonly', s => s.getAllKeys(), LIMIT), keys => {
+    const n = (p: string) => keys.filter(k => typeof k === 'string' && k.startsWith(p)).length;
+    return `共 ${keys.length} 条：已收藏 ${n(SAVED)}，没写完的收藏 ${n(PENDING)}，整段收藏任务 ${n(THREAD_JOB)}，文件夹 ${n(KEY)}`;
+  });
+  await run('写一条记录', () => idb('readwrite', s => s.put(Date.now(), 'diag'), LIMIT), () => '通');
+  const dir = await run('取出文件夹', () => loadDir(LIMIT), v => (v ? '有' : '没选'));
+  if (!dir) return steps;
+  const state = await run('查授权', () => within('查授权', LIMIT, dir.queryPermission({ mode: 'readwrite' })), v => v);
+  if (state === 'granted') await run('读文件夹', () => within('读文件夹', LIMIT, hasFolder(dir, '.clipper-自检-不存在')), () => '通');
+  return steps;
 }
 
 export interface VaultFile { name: string; data: Blob | string }

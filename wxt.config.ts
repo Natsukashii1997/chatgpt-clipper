@@ -8,8 +8,13 @@ import { defineConfig } from 'wxt';
 // （FR-9，常浩 2026-11-19 选「只补装」，同日同意加这两个站的 host 权限）：内容脚本的 matches 不算 host 权限（L-24），
 // 没有它 tabs.query 按网址查不到标签页、executeScript 被拒（2026-11-19 探针）。站点范围和内容脚本相同；
 // 后台不向这两个站发请求。
+// 各入口分开打包，时间只取一次，内容脚本、后台、设置页才是同一个值
+const BUILD = JSON.stringify(new Date().toISOString());
+
 export default defineConfig({
   srcDir: 'src',
+  // 打包时间写进代码：设置页和自检显示它，用来确认浏览器里跑的是不是刚打的这一版（L-26）
+  vite: () => ({ define: { __BUILD__: BUILD } }),
   manifest: {
     name: 'AI 回答收藏器',
     description: '把 ChatGPT 或 Claude 的某条回答存成长图和 Markdown 笔记，写进 Obsidian。全部本地处理，不上传。',

@@ -1,6 +1,6 @@
 import { answerBlocks, answerChars, answerFingerprint, countQuestions, answerKey, answerQuestion, answerTitle, findAnswers, inChat, NOISE, repairRequest, selectedBlocks, SITE_NAME, userText } from '@/lib/adapter';
 import { answerToMarkdown, buildNote, buildThreadNote, readCodeEditors, type CodeRead, type ThreadRound } from '@/lib/markdown';
-import { PAGES, type DownloadFile, type FailCode, type Request, type Response } from '@/lib/messages';
+import { BUILD, PAGES, type DownloadFile, type FailCode, type Request, type Response } from '@/lib/messages';
 import { clipHash, jumpToClip } from '@/lib/jump';
 import { beijingTime, folderName, noteName } from '@/lib/naming';
 import { exportPdf, pdfAnswer, type PdfAnswer, type PdfDoc, type PdfRound } from '@/lib/pdf';
@@ -49,6 +49,15 @@ export default defineContentScript({
     });
     observer.observe(document.body, { childList: true, subtree: true });
     scan();
+    // 自检：页面上发一个 clipper-diag 事件，把这份脚本和后台的打包时间、后台入库各步通不通写到 <html data-clipper-diag>
+    //（只有状态和数量，没有文件夹名和收藏内容）。排查「卡在入库」用，后台 20 秒不回话也写明（L-26）
+    ctx.addEventListener(document, 'clipper-diag', () => void (async () => {
+      const res = (await Promise.race([
+        browser.runtime.sendMessage({ type: 'diag' } satisfies Request).catch((e: Error) => ({ ok: false, error: e.message })),
+        new Promise(r => setTimeout(r, 20_000, { ok: false, error: '后台 20 秒没回话' })),
+      ])) as Response | undefined;
+      document.documentElement.dataset.clipperDiag = JSON.stringify({ content: BUILD, background: res?.ok ? res.diag : { error: res?.ok === false ? res.error : '后台无响应' } });
+    })());
     // 选中文字时，选区所在回答的丝带变荧光笔（作废时 ctx 自动摘掉监听）
     ctx.addEventListener(document, 'selectionchange', () => {
       if (!picking) picking = requestAnimationFrame(() => {

@@ -272,6 +272,85 @@ test('取 Vault 文件夹、查授权一直不回（2026-11-20 常浩真实 Chro
   await opt.close();
 });
 
+test('存着的文件夹读不出、读它的事务一直不结束（L-26，2026-11-20 常浩真实 Chrome）：到时中止，不堵住后面的写；设置页重新选文件夹照样存得进', async () => {
+  const sw = ctx.serviceWorkers()[0];
+  await setVault(sw);
+  // 读 vaultDir 的请求永远不回，事务被一个接一个的真请求拖着不结束；重新存一次 vaultDir 后恢复
+  const poison = () => {
+    if (self.__get) return;
+    self.__poison = true;
+    const get = self.__get = IDBObjectStore.prototype.get, put = self.__put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.get = function (key) {
+      if (key !== 'vaultDir' || !self.__poison) return get.call(this, key);
+      const spin = () => { try { get.call(this, 'x').onsuccess = spin; } catch { /* 事务被中止了 */ } };
+      spin();
+      return {};
+    };
+    IDBObjectStore.prototype.put = function (v, key) { if (key === 'vaultDir') self.__poison = false; return put.call(this, v, key); };
+  };
+  try {
+    await sw.evaluate(poison);
+    await sw.evaluate(() => { self.__dirLimit = 1500; });
+    const text = await (await collectCard(page, `${ANSWER} clipper-ribbon button`)).innerText();
+    assert.match(text, /入库\s+授权失效/, text);
+    assert.match(text, /读不出 Vault 文件夹的授权（浏览器 1\.5 秒没回应），去设置页重新选一次文件夹/, text);
+    // 卡住的读已中止：同一个库马上能写
+    const wrote = await sw.evaluate(() => Promise.race([
+      new Promise(r => { const o = indexedDB.open('chatgpt-clipper', 1); o.onsuccess = () => { const tx = o.result.transaction('kv', 'readwrite'); tx.objectStore('kv').put(1, 'probe'); tx.oncomplete = () => r('写进了'); }; }),
+      new Promise(r => setTimeout(r, 3000, '写被堵住')),
+    ]));
+    assert.equal(wrote, '写进了');
+  } finally {
+    await sw.evaluate(() => {
+      if (self.__get) { IDBObjectStore.prototype.get = self.__get; IDBObjectStore.prototype.put = self.__put; delete self.__get; delete self.__put; }
+      delete self.__dirLimit; delete self.__poison;
+    });
+  }
+
+  // 设置页：读不出时写明；点「选择文件夹」重新选，存得进、恢复「已授权」
+  const opt = await ctx.newPage();
+  await opt.addInitScript(poison);
+  await opt.addInitScript(() => { self.__dirLimit = 1000; window.showDirectoryPicker = () => navigator.storage.getDirectory(); });
+  await opt.goto(`chrome-extension://${new globalThis.URL(sw.url()).host}/options.html`);
+  await opt.locator('#msg', { hasText: /\S/ }).waitFor({ timeout: 5_000 });
+  try {
+    assert.equal(await opt.locator('#cur').innerText(), '读不出');
+    await opt.locator('#pick').click();
+    await opt.locator('#msg', { hasText: '已授权，收藏会直接写进这个文件夹。' }).waitFor({ timeout: 10_000 });
+    assert.notEqual(await opt.locator('#cur').innerText(), '读不出');
+  } finally {
+    await opt.close();   // 留着不关，后面「打开设置页」的用例等不到新页面
+  }
+  // 重新选过之后，后台读得出文件夹、走到写入（这条回答前面的用例收藏过，原文件夹被挪走，所以是「已收藏过」）
+  const ok = await (await collectCard(page, `${ANSWER} clipper-ribbon button`)).innerText();
+  assert.match(ok, /入库\s+(已存入|已更新|已收藏过)/, ok);
+});
+
+test('自检：设置页显示版本和打包时间，「自检」列出设置页和后台每一步通不通；页面上发 clipper-diag 事件也能拿到', async () => {
+  const sw = ctx.serviceWorkers()[0];
+  await setVault(sw);
+  const opt = await ctx.newPage();
+  await opt.goto(`chrome-extension://${new globalThis.URL(sw.url()).host}/options.html`);
+  assert.match(await opt.locator('#build').innerText(), /^版本 \d+\.\d+\.\d+ · 打包于 \d{4}-\d{2}-\d{2} \d{2}:\d{2}（北京时间）$/);
+  try {
+    await opt.locator('#diag').click();
+    await opt.locator('#diagOut', { hasText: /后台（打包于/ }).waitFor({ timeout: 15_000 });
+    const out = await opt.locator('#diagOut').innerText();
+    assert.doesNotMatch(out, /卡住|出错|不是同一版/, out);
+    for (const step of ['读一条文字设置', '列出记录', '写一条记录：通', '取出文件夹：有', '查授权：granted', '读文件夹：通'])
+      assert.equal(out.split(step).length - 1, 2, `设置页和后台都该有「${step}」\n${out}`);
+  } finally {
+    await opt.close();
+  }
+
+  await page.evaluate(() => { delete document.documentElement.dataset.clipperDiag; document.dispatchEvent(new Event('clipper-diag')); });
+  await page.waitForFunction(() => document.documentElement.dataset.clipperDiag, null, { timeout: 15_000 });
+  const diag = JSON.parse(await page.evaluate(() => document.documentElement.dataset.clipperDiag));
+  assert.equal(diag.content, diag.background.build, '内容脚本和后台该是同一版');
+  assert.ok(diag.background.steps.some(s => s.step === '查授权' && s.out === 'granted'), JSON.stringify(diag));
+  assert.doesNotMatch(JSON.stringify(diag), /卡住|出错/);
+});
+
 test('标题变了（如命名规则调整）：只有插件写的文件就改成新名字；有用户自己的文件就原地覆盖、不改名', async () => {
   const sw = ctx.serviceWorkers()[0];
   // 把这条回答的收藏记录改成早期格式（只存文件夹名），并按旧的截断名字建好文件夹
