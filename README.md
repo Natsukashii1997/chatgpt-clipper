@@ -29,7 +29,7 @@ npm run compile                   # 类型检查
 | `https://images.openai.com/*`、`https://*.oaiusercontent.com/*` | 长图里画回答中的图片（搜索图、生成图、上传图）。这两个域名不给页面 CORS 头，内容脚本读不到，由后台取回已显示的图片转成内嵌数据；只取图片，不发送任何内容 |
 | `debugger` | 一键导出 PDF（FR-15，常浩 2026-11-10 确认）：只接到插件自己开的打印页上，用 `Page.printToPDF` 打印，导完马上断开；导出那一两秒浏览器顶部会出现「已开始调试此浏览器」提示条 |
 | `scripting`、`https://chatgpt.com/*`、`https://claude.ai/*` | 插件安装、更新、重新加载后，给已开的这两个站的页面补装内容脚本，不用刷新页面（FR-9，常浩 2026-11-19 同意）。内容脚本的 `matches` 不算 host 权限，没有这两项补装不了（L-24）；后台不向这两个站发请求 |
-| 设置页（`options_ui`，不需要权限） | 用 File System Access API 选一次 Vault 里的目标文件夹，目录句柄存在扩展自己的 IndexedDB；授权失效时在这里重新授权 |
+| 设置页（`options_ui`，不需要权限） | 用 File System Access API 选一次 Vault 里的目标文件夹，目录句柄存在扩展自己的 IndexedDB；授权失效时在这里重新授权；底部显示版本和打包时间，「自检」列出入库各步通不通 |
 | 内容脚本 `matches: https://chatgpt.com/*`、`https://claude.ai/*` | 只在 ChatGPT、Claude 页面上挂「收藏」丝带、读取用户点选的那条回答 |
 
 不要 `<all_urls>`、`activeTab`、`storage`、`cookies`：长图用离线快照栅格化（方案 C），不需要截屏；不读写 cookie、token、localStorage。
@@ -39,7 +39,7 @@ npm run compile                   # 类型检查
 ```
 src/entrypoints/content.ts   挂按钮、串起快照 → 长图 → 转文字 → 写入（失败退回下载）
 src/entrypoints/background.ts 写 Vault、调 downloads、打开设置页
-src/entrypoints/options/     设置页：选 Vault 文件夹、重新授权
+src/entrypoints/options/     设置页：选 Vault 文件夹、重新授权、版本与自检
 src/lib/vault.ts             目录句柄的存取、授权状态、写一条收藏（同名加序号）
 src/lib/adapter.ts           ChatGPT 页面选择器（只此一处）
 src/lib/snapshot.ts          离线快照：内联计算样式 → SVG foreignObject → PNG
