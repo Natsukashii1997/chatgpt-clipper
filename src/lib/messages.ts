@@ -10,6 +10,8 @@ export type Request =
   | { type: 'download'; folder: string; files: DownloadFile[] }
   | { type: 'show'; id: number }
   | { type: 'options' }
+  // 自检：后台把入库要走的每一步各试一次（vault.ts diagnose）
+  | { type: 'diag' }
   | { type: 'image'; url: string }
   // 整段收藏（FR-13）分批写：开头定文件夹，每张长图一条消息（一起发可能超过消息大小上限），最后写笔记
   | { type: 'thread-cancel'; job: string }
@@ -20,12 +22,18 @@ export type Request =
   // name 文件名（不带 .pdf），width 回答排版宽度（按 A4 版心缩放）
   | { type: 'pdf-part'; job: string; text: string }
   | { type: 'pdf'; job: string; name: string; width: number };
+/** 自检结果：build 是这份代码的打包时间（看浏览器里跑的是不是最新版），steps 是每一步通不通、用时（毫秒）；page 是设置页上一次自检的结果 */
+export interface Diag { build: string; steps: { step: string; ms: number; out: string }[]; page?: { at: number; steps: { step: string; ms: number; out: string }[] } }
+/** 打包时间（ISO），wxt.config.ts 在打包时写入 */
+declare const __BUILD__: string;
+export const BUILD = __BUILD__;
+
 /** code：没选文件夹、授权失效，这两种可以去设置页解决 */
 export type FailCode = 'no-folder' | 'no-permission';
 /** save 的结果：updated 覆盖了这条回答原来的收藏；folder 整段收藏写到的文件夹名；moved 收藏过但原文件夹已不在（被整理走了），没有重写；open 在 Obsidian 里打开笔记的链接（没设置位置时为空）。saved：已收藏的指纹。pages：导出的 PDF 有几页。
  *  image 的结果：dataUrl 是取到的图片 */
 export type Response =
-  | { ok: true; ids?: number[]; path?: string; folder?: string; job?: string; updated?: boolean; moved?: boolean; open?: string; saved?: string[]; dataUrl?: string; pages?: number }
+  | { ok: true; ids?: number[]; path?: string; folder?: string; job?: string; updated?: boolean; moved?: boolean; open?: string; saved?: string[]; dataUrl?: string; pages?: number; diag?: Diag }
   | { ok: false; error: string; code?: FailCode };
 
 /** 下载根目录下的子文件夹，避免和用户的其他下载混在一起 */

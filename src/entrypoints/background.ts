@@ -1,5 +1,5 @@
-import { DOWNLOAD_ROOT, PAGES, PART_CHARS, type PrintPart, type Request, type Response } from '@/lib/messages';
-import { cancelThread, findDir, finishThread, getSaved, loadWhere, obsidianUrl, saveCollection, threadFolder, writeThreadFile } from '@/lib/vault';
+import { BUILD, DOWNLOAD_ROOT, PAGES, PART_CHARS, type PrintPart, type Request, type Response } from '@/lib/messages';
+import { cancelThread, diagnose, findDir, loadPageDiag, finishThread, getSaved, loadWhere, obsidianUrl, saveCollection, threadFolder, writeThreadFile } from '@/lib/vault';
 
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener((msg: Request, _sender, reply: (r: Response) => void) => {
@@ -78,6 +78,7 @@ async function handle(msg: Request): Promise<Response> {
     if (!html) return { ok: false, error: '要导出的内容没送到后台' };
     return { ok: true, ...(await printPdf(html, msg.name, msg.width)) };
   }
+  if (msg.type === 'diag') return { ok: true, diag: { build: BUILD, steps: await diagnose(), page: await loadPageDiag().catch(() => undefined) } };
   if (msg.type === 'options') {
     await browser.runtime.openOptionsPage();
     return { ok: true };

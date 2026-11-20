@@ -21,6 +21,11 @@ h1.next{margin-top:44px}
 #where{flex:1;font:inherit;border:0;outline:none;background:transparent;min-width:0}
 #whereMsg{margin:12px 2px 0;color:#6b6b6b;font-size:13px}
 #whereMsg.ok{color:#10a37f}#whereMsg.warn{color:#b45309}
+.foot{display:flex;align-items:center;gap:12px;margin-top:44px;color:#9a9a9a;font-size:13px}
+.foot span{flex:1}
+.foot button{font-size:13px;padding:4px 12px}
+#diagOut{margin:12px 0 0;padding:12px 14px;background:#fff;border:1px solid #e4e4e0;border-radius:10px;font:12px/1.7 ui-monospace,Menlo,monospace;white-space:pre-wrap;color:#1f1f1f}
+#diagOut[hidden]{display:none}
 </style>
 </head>
 <body>
@@ -38,6 +43,9 @@ h1.next{margin-top:44px}
   <p class="hint">填上面这个文件夹在 Obsidian 里的位置：第一段是 Vault 的名字，后面是它在 Vault 里的路径。填好后，收藏完点进度卡上的绿色横条，就能在 Obsidian 里打开这篇笔记。</p>
   <div class="row"><input id="where" placeholder="例如：Obsidian Vault/00 待整理/ChatGPT收藏"></div>
   <p id="whereMsg"></p>
+
+  <div class="foot"><span id="build"></span><button id="diag">自检</button></div>
+  <pre id="diagOut" hidden></pre>
 </main>
 <script type="module" src="./main.ts"></script>
 </body>

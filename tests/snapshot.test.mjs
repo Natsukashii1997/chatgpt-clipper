@@ -232,12 +232,24 @@ test('取 Vault 文件夹、查授权一直不回（2026-11-20 常浩真实 Chro
   const collect = async () => (await collectCard(page, `${ANSWER} clipper-ribbon button`)).innerText();
   const downloads = async () => (await sw.evaluate(() => chrome.downloads.search({}))).length;
   // 查授权永远不回
-  const hang = () => { self.__qp ??= FileSystemHandle.prototype.queryPermission; FileSystemHandle.prototype.queryPermission = () => new Promise(() => {}); };
+  const hangQuery = () => { self.__qp ??= FileSystemHandle.prototype.queryPermission; FileSystemHandle.prototype.queryPermission = () => new Promise(() => {}); };
+  // 查授权和读文件夹都永远不回
+  const hang = () => {
+    self.__qp ??= FileSystemHandle.prototype.queryPermission; FileSystemHandle.prototype.queryPermission = () => new Promise(() => {});
+    self.__gd ??= FileSystemDirectoryHandle.prototype.getDirectoryHandle; FileSystemDirectoryHandle.prototype.getDirectoryHandle = () => new Promise(() => {});
+  };
   try {
-    // 后台限时 1.5 秒：写明读不出授权，退回下载
-    await sw.evaluate(hang);
+    // 只有查授权不回（2026-11-20 常浩 Chrome 158 自检实测）：改成试读文件夹，读得通就照常入库，不退回下载
+    await sw.evaluate(hangQuery);
     await sw.evaluate(() => { self.__dirLimit = 1500; });
     let n = await downloads(), text = await collect();
+    assert.match(text, /入库\s+(已存入|已更新|已收藏过)/, text);
+    assert.equal(await downloads(), n, '查授权不回但文件夹读得通，不该退回下载');
+
+    // 查授权、读文件夹都不回，后台限时 1.5 秒：写明读不出授权，退回下载
+    await sw.evaluate(hang);
+    n = await downloads();
+    text = await collect();
     assert.match(text, /入库\s+授权失效/, text);
     assert.match(text, /读不出文件夹「[^」]*」的授权（浏览器 1\.5 秒没回应），去设置页重新选一次文件夹/, text);
     assert.match(text, /^已存到下载目录\n/, text);
@@ -256,7 +268,11 @@ test('取 Vault 文件夹、查授权一直不回（2026-11-20 常浩真实 Chro
     assert.ok(await downloads() > n, '后台不回话时该退回下载');
   } finally {
     await page.evaluate(() => { delete document.documentElement.dataset.clipperSaveLimit; });
-    await sw.evaluate(() => { if (self.__qp) FileSystemHandle.prototype.queryPermission = self.__qp; delete self.__dirLimit; });
+    await sw.evaluate(() => {
+      if (self.__qp) FileSystemHandle.prototype.queryPermission = self.__qp;
+      if (self.__gd) FileSystemDirectoryHandle.prototype.getDirectoryHandle = self.__gd;
+      delete self.__dirLimit;
+    });
   }
 
   // 设置页：不停在「未选择」，写明读不出授权、让重新选
@@ -270,6 +286,86 @@ test('取 Vault 文件夹、查授权一直不回（2026-11-20 常浩真实 Chro
   assert.match(await opt.locator('#msg').innerText(), /^读不出这个文件夹的授权（浏览器一直没回应），点「选择文件夹」重新选一次。$/);
   assert.ok(await opt.locator('#pick.primary').count(), '「选择文件夹」该突出显示');
   await opt.close();
+});
+
+test('存着的文件夹读不出、读它的事务一直不结束（L-26，2026-11-20 常浩真实 Chrome）：到时中止，不堵住后面的写；设置页重新选文件夹照样存得进', async () => {
+  const sw = ctx.serviceWorkers()[0];
+  await setVault(sw);
+  // 读 vaultDir 的请求永远不回，事务被一个接一个的真请求拖着不结束；重新存一次 vaultDir 后恢复
+  const poison = () => {
+    if (self.__get) return;
+    self.__poison = true;
+    const get = self.__get = IDBObjectStore.prototype.get, put = self.__put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.get = function (key) {
+      if (key !== 'vaultDir' || !self.__poison) return get.call(this, key);
+      const spin = () => { try { get.call(this, 'x').onsuccess = spin; } catch { /* 事务被中止了 */ } };
+      spin();
+      return {};
+    };
+    IDBObjectStore.prototype.put = function (v, key) { if (key === 'vaultDir') self.__poison = false; return put.call(this, v, key); };
+  };
+  try {
+    await sw.evaluate(poison);
+    await sw.evaluate(() => { self.__dirLimit = 1500; });
+    const text = await (await collectCard(page, `${ANSWER} clipper-ribbon button`)).innerText();
+    assert.match(text, /入库\s+授权失效/, text);
+    assert.match(text, /读不出 Vault 文件夹的授权（浏览器 1\.5 秒没回应），去设置页重新选一次文件夹/, text);
+    // 卡住的读已中止：同一个库马上能写
+    const wrote = await sw.evaluate(() => Promise.race([
+      new Promise(r => { const o = indexedDB.open('chatgpt-clipper', 1); o.onsuccess = () => { const tx = o.result.transaction('kv', 'readwrite'); tx.objectStore('kv').put(1, 'probe'); tx.oncomplete = () => r('写进了'); }; }),
+      new Promise(r => setTimeout(r, 3000, '写被堵住')),
+    ]));
+    assert.equal(wrote, '写进了');
+  } finally {
+    await sw.evaluate(() => {
+      if (self.__get) { IDBObjectStore.prototype.get = self.__get; IDBObjectStore.prototype.put = self.__put; delete self.__get; delete self.__put; }
+      delete self.__dirLimit; delete self.__poison;
+    });
+  }
+
+  // 设置页：读不出时写明；点「选择文件夹」重新选，存得进、恢复「已授权」
+  const opt = await ctx.newPage();
+  await opt.addInitScript(poison);
+  await opt.addInitScript(() => { self.__dirLimit = 1000; window.showDirectoryPicker = () => navigator.storage.getDirectory(); });
+  await opt.goto(`chrome-extension://${new globalThis.URL(sw.url()).host}/options.html`);
+  await opt.locator('#msg', { hasText: /\S/ }).waitFor({ timeout: 5_000 });
+  try {
+    assert.equal(await opt.locator('#cur').innerText(), '读不出');
+    await opt.locator('#pick').click();
+    await opt.locator('#msg', { hasText: '已授权，收藏会直接写进这个文件夹。' }).waitFor({ timeout: 10_000 });
+    assert.notEqual(await opt.locator('#cur').innerText(), '读不出');
+  } finally {
+    await opt.close();   // 留着不关，后面「打开设置页」的用例等不到新页面
+  }
+  // 重新选过之后，后台读得出文件夹、走到写入（这条回答前面的用例收藏过，原文件夹被挪走，所以是「已收藏过」）
+  const ok = await (await collectCard(page, `${ANSWER} clipper-ribbon button`)).innerText();
+  assert.match(ok, /入库\s+(已存入|已更新|已收藏过)/, ok);
+});
+
+test('自检：设置页显示版本和打包时间，「自检」列出设置页和后台每一步通不通；页面上发 clipper-diag 事件也能拿到', async () => {
+  const sw = ctx.serviceWorkers()[0];
+  await setVault(sw);
+  const opt = await ctx.newPage();
+  await opt.goto(`chrome-extension://${new globalThis.URL(sw.url()).host}/options.html`);
+  assert.match(await opt.locator('#build').innerText(), /^版本 \d+\.\d+\.\d+ · 打包于 \d{4}-\d{2}-\d{2} \d{2}:\d{2}（北京时间）$/);
+  try {
+    await opt.locator('#diag').click();
+    await opt.locator('#diagOut', { hasText: /后台（打包于/ }).waitFor({ timeout: 15_000 });
+    const out = await opt.locator('#diagOut').innerText();
+    assert.doesNotMatch(out, /卡住|出错|不是同一版/, out);
+    for (const step of ['读一条文字设置', '列出记录', '写一条记录：通', '取出文件夹：有', '查授权：granted', '查只读授权：granted', '读文件夹：通'])
+      assert.equal(out.split(step).length - 1, 2, `设置页和后台都该有「${step}」\n${out}`);
+  } finally {
+    await opt.close();
+  }
+
+  await page.evaluate(() => { delete document.documentElement.dataset.clipperDiag; document.dispatchEvent(new Event('clipper-diag')); });
+  await page.waitForFunction(() => document.documentElement.dataset.clipperDiag, null, { timeout: 15_000 });
+  const diag = JSON.parse(await page.evaluate(() => document.documentElement.dataset.clipperDiag));
+  assert.equal(diag.content, diag.background.build, '内容脚本和后台该是同一版');
+  assert.ok(diag.background.steps.some(s => s.step === '查授权' && s.out === 'granted'), JSON.stringify(diag));
+  assert.ok(diag.background.page.steps.some(s => s.step === '读文件夹' && s.out === '通'), '后台自检该带上设置页上一次自检的结果');
+  assert.doesNotMatch(JSON.stringify(diag), /卡住|出错/);
 });
 
 test('标题变了（如命名规则调整）：只有插件写的文件就改成新名字；有用户自己的文件就原地覆盖、不改名', async () => {
