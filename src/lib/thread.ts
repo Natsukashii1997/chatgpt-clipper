@@ -1,7 +1,7 @@
 // 整段收藏（FR-13，2026-11-04 用户选定「拉长书签」）：从对话开头滚到结尾，逐条读每一问每一答，读完滚回原位。
 // Claude 的对话是虚拟列表，远处的行会被卸掉：每滚一步就把刚出现的行读掉，不能先滚一遍再统一读（docs/recon/2026-11-04-整段收藏侦察记录.md）
 import { threadItems, type ThreadItem } from './adapter';
-import { scrollParent } from './jump';
+import { scrollParent } from './dom';
 
 // 没有下一条时每步滚半屏（相邻两步渲染的行有重叠，不漏行）；滚完等行渲染出来（实测 150ms 内）；一条找不到时最多再等几次
 const STEP = 0.5, STEP_WAIT = 400, TRIES = 3;

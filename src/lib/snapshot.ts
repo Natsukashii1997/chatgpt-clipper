@@ -1,6 +1,7 @@
 // 离线快照（方案 C，docs/recon/2026-11-02-原型1-长图.md）：复制回答 → 逐元素写入计算样式 → SVG foreignObject 栅格化成 PNG。
 // 只出 PNG：用户 2026-11-02 决定不要离线 HTML（PRD FR-3）。
 import { MD } from './adapter';
+import { blobToDataUrl } from './dom';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 // 这些属性一律写全，不和默认值比较：Tailwind 预设 `border: 0 solid`，比较后会漏掉宽度 0，只剩 solid → 粗黑框（LESSONS L-01）
@@ -13,8 +14,6 @@ export interface Snapshot {
   root: HTMLElement;
   width: number;
   height: number;
-  nodes: number;
-  ms: number;
   /** 导不出画面、在长图里留了空白的 canvas 个数（被跨域内容污染过的画布） */
   blanks: number;
 }
@@ -56,7 +55,6 @@ export function styler() {
 
 /** 复制回答并写入计算样式。能滚动的区域不画滚动条；代码块里纵向滚动的代码框展开显示全部代码（M1 验收 P9、P15） */
 export function takeSnapshot(el: HTMLElement, opts: SnapshotOptions = {}): Snapshot {
-  const t0 = performance.now();
   const st = styler();
   try {
     const clone = el.cloneNode(true) as HTMLElement;
@@ -105,7 +103,7 @@ export function takeSnapshot(el: HTMLElement, opts: SnapshotOptions = {}): Snaps
     const root = document.createElement('div');
     root.setAttribute('style', `width:${width}px;height:${height}px;overflow:hidden;background:${pageBackground()}`);
     root.appendChild(clone);
-    return { root, width, height, nodes: src.length, ms: Math.round(performance.now() - t0), blanks };
+    return { root, width, height, blanks };
   } finally {
     st.dispose();
   }
@@ -213,13 +211,7 @@ async function embedFonts(root: HTMLElement): Promise<number> {
 async function toDataUrl(url: string): Promise<string> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${res.status} ${url}`);
-  const blob = await res.blob();
-  return new Promise((resolve, reject) => {
-    const fr = new FileReader();
-    fr.onload = () => resolve(fr.result as string);
-    fr.onerror = () => reject(fr.error);
-    fr.readAsDataURL(blob);
-  });
+  return blobToDataUrl(await res.blob());
 }
 
 /** 栅格化成 PNG；像素比默认跟屏幕一致 */
