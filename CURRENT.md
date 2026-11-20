@@ -17,13 +17,24 @@
 - 本轮新坑：L-26。
 
 
+## 装提交、推送前的必经检查钩子（2026-11-20，Claude，常浩批复盘 P4、P6「批（按改过的）」；已提交、PR 待合并，无需发布）
+
+- 时间：开工 `2026-11-20 11:02`。★ 来由：跨项目复盘 P6「检查脚本接进必经环节」：没有 CI 的仓库装 pre-push 钩子；P4 的 commit-msg 钩子一起装。钩子来自起步骨架 0.4.0（my-skills#112）。
+- 改了哪些文件：`scripts/hooks/pre-push`（推送前跑 `node scripts/check-rules.mjs` 和 `node --test $(ls tests/*.test.mjs | grep -v snapshot)`）、`scripts/hooks/commit-msg` + `commit-msg.mjs`（修复类提交正文要有「同类：」一行）、`tests/hooks.test.mjs`（单测 + 临时仓库真跑）、`AGENTS.md`（加安装命令 `git config core.hooksPath scripts/hooks`）；`CURRENT.md` 还顺手补了 #15 交接漏的开工时刻和「本轮新坑：L-25」两行（#15 合并后交接格式测试红）；本文件。
+- 测试：`node --test tests/hooks.test.mjs` 原样 `ℹ pass 3` / `ℹ fail 0`；在本 worktree 里 `sh scripts/hooks/pre-push` 退出码 0（证据 `~/session-retro/2026-10-18_2026-11-18/evidence/p6-hooks/chatgpt-clipper.txt`）。
+- 验证环境：替身（临时 git 仓库、本机裸仓库）；本仓库的 `core.hooksPath` 合并后才在本机装，装后真推一次再算验收。
+- 外部前提与实测：依赖 git 的 `core.hooksPath` 和钩子退出码，已在临时仓库实测。
+- 与授权不一致之处、遗留问题、范围外发现：无。
+- 本轮新坑：无。
+
 ## 入库卡死：取 Vault 文件夹、查授权和等后台回话都限时（2026-11-20，Claude，常浩真实 Chrome 收藏卡在「入库」、发来扩展卡片、后台控制台和设置页三张截图；已提交、PR 待合并，未发布）
 
-- 时间：开工 `2026-11-20`。★ 来由：#14 合并后常浩说「有问题，没办法入库了，卡死了」，刷新插件和页面后仍卡。Playwright 里 #14、#7 两份产物各收藏两次都正常，复现不出；常浩截图显示加载来源是主目录 `.output/chrome-mv3`、后台控制台空白、设置页停在「未选择」且状态提示为空（同库的 Obsidian 路径读得出）→ 判定卡在 `loadDir()` / `queryPermission()`。
+- 时间：开工 `2026-11-20 09:56`（按证据目录建立时间补记）。★ 来由：#14 合并后常浩说「有问题，没办法入库了，卡死了」，刷新插件和页面后仍卡。Playwright 里 #14、#7 两份产物各收藏两次都正常，复现不出；常浩截图显示加载来源是主目录 `.output/chrome-mv3`、后台控制台空白、设置页停在「未选择」且状态提示为空（同库的 Obsidian 路径读得出）→ 判定卡在 `loadDir()` / `queryPermission()`。
 - 改了哪些文件：`src/lib/vault.ts`（新 `findDir()`：取文件夹 + 查授权限时 5 秒，到时 `state: 'stuck'`；`DirState` 加 `'stuck'`）；`src/entrypoints/background.ts`（入库和整段收藏改用 `findDir()`，`stuck` 时回 `no-permission` 并写明读不出授权）；`src/entrypoints/content.ts`（等后台回「入库」限时 60 秒，到时标「超时」、退回下载、给「重试」）；`src/entrypoints/options/main.ts`（设置页用 `findDir()`，`stuck` 时写明、突出「选择文件夹」）；`tests/snapshot.test.mjs`（新用例）；`docs/PRD.md` FR-5；`docs/LESSONS.md` L-25；本文件。
 - 测试：见 PR；证据目录 `~/Library/Application Support/chatgpt-clipper/evidence/2026-11-20-vault-hang/`（`red-old-code.txt` 旧代码下进度卡 30 秒没收尾，`green-new-code.txt`，`full-*.txt`）。
 - 验证：Playwright Chromium（无头），用永不返回的 `queryPermission` 模拟；没在常浩的真实 Chrome 里试。
 - 遗留：为什么常浩的 Chrome 里取文件夹或查授权不返回，没查清；先请常浩在设置页重新选一次文件夹，好了就说明是旧句柄坏了。
+- 本轮新坑：L-25。
 
 ## 插件更新后给已开页面补装脚本，不用刷新（FR-9「只补装」）（2026-11-19，Claude，常浩选「换个改法（只补装）」，又同意加 chatgpt.com、claude.ai 两个站的 host 权限；已合并 PR #14（`73ea2de`），主目录已打包）
 
