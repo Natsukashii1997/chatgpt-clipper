@@ -14,6 +14,7 @@ Chrome 桌面版 MV3 插件，常浩自用：在 ChatGPT 或 Claude 网页上一
 | 开需求、拆任务、实现、审查 | 下面「Agent skills」一节 |
 | 写交接、验收别人的交接 | [docs/templates/handoff.md](docs/templates/handoff.md) 骨架；[OPERATIONS](docs/OPERATIONS.md)「交接写法」「报告与验收」 |
 | 做 M1 验收、看哪类没过 | [docs/acceptance/M1-验收矩阵.md](docs/acceptance/M1-验收矩阵.md) |
+| 合并后在真实 Chrome 里验 | [docs/acceptance/真实Chrome冒烟清单.md](docs/acceptance/真实Chrome冒烟清单.md)：按改动碰到的地方挑项走，结果写进交接 |
 | 打包发给别人 | [OPERATIONS](docs/OPERATIONS.md)「打包发给别人」、`public/安装说明.txt` |
 | 查以前某一轮做了什么 | [CURRENT.md](CURRENT.md) 只留近期几节，更早的在 [docs/history/](docs/history/) |
 
