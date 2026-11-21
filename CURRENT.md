@@ -2,14 +2,14 @@
 
 当前阶段目标：按 2026-11-20 评估结果分批优化。A 修缺陷、B 文档对齐已做并合并（#21，PR #22，`4203531`）；C 结构简化、D 碰已定内容的两项（改版自检补盲区；稳定编号与清单重建）、E 真实 Chrome 冒烟清单与清理旧 worktree 都还没做，做哪批由常浩定。
 
-更新：2026-11-21。A、B（#22）、C（#24，`981cb45`）都已合并，主目录已拉齐并重新构建（00:58）。下一步：常浩在扩展页刷新插件后，Claude 在真实 Chrome 里代验 C 批；再定 PRD 三处说法删不删，以及 D、E 做不做。
+更新：2026-11-21。A、B（#22）、C（#24，`981cb45`）都已合并，主目录已拉齐并重新构建（00:58）。C 批已在真实 Chrome 代验（单条收藏、页面自检、导出 PDF 通过）。下一步：再定 PRD 三处说法删不删，以及 D、E 做不做。
 
 ### 主线：评估后分批优化｜完成 3/5
 
 - ✅ A 修缺陷（#21，已合并，2026-11-20 常浩验收）：长图里图片、字体没嵌进时标黄；恢复和整段消息限时；小硬化三处；Claude 兜底文件名
 - ✅ B 文档对齐（#21，已合并）：AGENTS、README、PRD、LESSONS、验收矩阵对齐现状；旧交接归档；新建 GLOSSARY.md、docs/DECIDED.md
 - ❓ PRD 里三处写了没实现的说法（点插件图标进入选择模式、处理伪元素、CDP 截图后备）删不删：等常浩定
-- ✅ C 结构简化（#23，PR #24 已合并 `981cb45`）：五步都已做完，行为不变；真实 Chrome 待代验
+- ✅ C 结构简化（#23，PR #24 已合并 `981cb45`）：五步都已做完，行为不变；真实 Chrome 已代验
 - 📌 D 碰已定内容：① 改版自检补盲区（FR-9）② 笔记写稳定编号、已收藏清单可从 Vault 重建、manifest 加固定 key（FR-5、FR-10）；每项动手前单独发「改动确认」
 - 📌 E 真实 Chrome 冒烟清单；清理三个已合并分支的旧 worktree
 
@@ -21,8 +21,9 @@
 - 改了哪些文件：五个提交。① `tests/snapshot.test.mjs` 改名 `tests/e2e.test.mjs`，`scripts/hooks/pre-push`、README、LESSONS 同步（没有拆成多个文件：用例共用一个浏览器、前后有状态依赖，拆开要重写整套搭建）。② 新 `src/lib/timeout.ts`（`within()`、`Stuck`、限时表 `LIMITS`，测试统一用 `globalThis.__limits` 改小）、`src/lib/ask.ts`（唯一的 `ask()` / `send()`）；`src/lib/messages.ts` 改成每种消息一行 `req` / `res`；`src/entrypoints/background.ts` 的消息处理改成按类型的处理表 `handlers`。③ `src/lib/vault.ts` 拆到 `src/lib/vault/` 七个文件（store、fs、dir、journal、save、staging、diag），`vault.ts` 只做统一出口；整段收藏四步改叫 `beginThread` / `stageThreadFile` / `endThread` / `cancelThread`。④ 新 `src/lib/persist.ts`（`saveSingle` / `saveThread` 入库返回 `Outcome`，`describeSingle` / `describeThread` 定下卡片显示什么）；`src/entrypoints/content.ts` 的 `capture()` 拆出 `produce()`，两条流程共用入库和收尾；`tests/thread-save.test.mjs` 改成 `tests/persist.test.mjs`（直接导入真实模块，补单条收藏判定表 4 条）。⑤ `src/lib/adapter.ts` 改成 `chatgptSite`、`claudeSite` 两个站点对象；新 `src/lib/dom.ts` 收三个重复的小函数；去掉 `Snapshot.nodes`、`Snapshot.ms`、`TITLE_SELECTORS`。文档：README 代码结构表、`GLOSSARY.md` 两处、本文件。
 - 测试：见下一行；`npm run compile` 无报错；`node scripts/check-rules.mjs` 输出「通用规则检查通过」。不含端到端的 6 个测试文件 `ℹ pass 58` / `ℹ fail 0`。
 - 验证：替身（无头 Chromium 加测试页、内存假文件系统），没在常浩的真实 Chrome 里试。端到端分步跑：第 ②③ 步后 49 条过 47，两条计时用例偶发失败、单独重跑都过（`e2e-step3.txt`、`e2e-step3-rerun2.txt`）；第 ④ 步后 `ℹ pass 49` / `ℹ fail 0`（`e2e-step4.txt`）。第 ⑤ 步后的全量当时机器负载均值 45～68（别的会话在编译），三遍都没全绿，每遍失败的用例不同、单独重跑都过：`full-final.txt` 107 条过 89（一条限时用例失败连带取消 15 条）、`full-final-2.txt` 过 106（失败的那条是我把测试里的人为限时改成 4 秒改坏的，已改成 2.5 秒，单独两遍都过）、`full-final-3.txt` 过 105（改版自检提醒、恢复限时两条计时用例）。负载降下来后（开始时 1 分钟负载 9.71）的一遍全量 `ℹ pass 107` / `ℹ fail 0` / `ℹ cancelled 0`（`full-quiet.txt`），也写在 PR #24 评论里。证据目录 `~/Library/Application Support/chatgpt-clipper/evidence/2026-11-20-issue-23/`。
+- 真实 Chrome 代验（2026-11-21 09:20，合并、主目录 00:58 重新构建、常浩刷新插件后，Claude in Chrome 操作 chatgpt.com 那条生成图片的回答，真实鼠标点击）：① 页面自检：内容脚本和后台都是 00:58 的包，七步全通，不带已收藏条数。② 丝带一打开就是「已收藏」（重构后指纹没变）。③ 再收一次：四步全绿，「271px · 已复制」「已更新」，绿块可点开 Obsidian；Vault 里同一个文件夹的 `answer.png`、笔记 09:20 更新，没有新建文件夹，笔记无 `incomplete`。④ 导出 PDF：「已存到「下载」· 1 页」，`~/Downloads/2026-11-21 用你知道的关于我的一切….pdf`（约 4MB）。没在真实 Chrome 验的：整段收藏、节选、Claude 站、各种失败退回下载的路径。
 - 截图：无（界面没变）。
-- 发布与回读：未发布。主目录的 `.output/chrome-mv3` 没动。
+- 发布与回读：未发布。主目录的 `.output/chrome-mv3` 已在合并后重新构建。
 - 与授权不一致之处、遗留问题、范围外发现：① 测试文件只改名、没拆分（原因见上）。② 测试里那条「后台不回话」用例的人为限时从 1.5 秒改成 2.5 秒：机器忙时 1.5 秒内连退回下载的消息都回不来。③ 端到端里的计时类用例在机器很忙时会偶发失败，这次没治本。④ `src/entrypoints/content.ts` 还有约 430 行，改版自检（`watchChat` / `arm`）和挂丝带没有动。⑤ 没有改变用户看得到的行为；内部函数名、测试开关名变了。⑥ 只做了电脑版。
 - 本轮新坑：无。
 
