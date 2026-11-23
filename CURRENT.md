@@ -29,7 +29,7 @@
 
 ## ChatGPT「还在生成」改认每一轮的状态属性（2026-11-23，Claude，接 #35 交接卡，修 bug 让 FR-16 回到原定行为；已提交、PR 待合并、未发布）
 
-- 时间：开工 `2026-11-23 15:33`（会话开始时没记，按建 worktree 前约 5 分钟推算）。★ 来由：15:29 真实 Chrome 上 ChatGPT 生成中拉丝带只导 PDF，写了一半的回答被导进去、不标黄（#35）：代码认的 `[data-testid="stop-button"]` 在现在的页面上不存在。
+- 时间：开工 `2026-11-23 15:35`（会话创建时间）。★ 来由：15:29 真实 Chrome 上 ChatGPT 生成中拉丝带只导 PDF，写了一半的回答被导进去、不标黄（#35）：代码认的 `[data-testid="stop-button"]` 在现在的页面上不存在。
 - 改了哪些文件：`src/lib/adapter.ts`（`chatgptSite.streaming` 改成看回答外面 `[data-talvt-turn-state]` 是不是 `in_progress`；`cancelled` 用户停掉的照常导）；`tests/fixtures/chatgpt-thread.html`（每一轮问答外面套 `data-talvt-turn-state`，加 `setTurnState()`，生成中显示不带 data-testid 的「停止」键）；`tests/e2e.test.mjs`（「ChatGPT 长对话」组加两条：最后一轮生成中跳过并标黄、cancelled 照常导）；新建 `docs/recon/2026-11-23-ChatGPT生成中标记侦察记录.md`；`docs/LESSONS.md` L-29；本文件。
 - 测试：`npm run build && npm test` 原样结果 `ℹ tests 118` / `ℹ pass 118` / `ℹ fail 0`（`full.txt`，开始时 1 分钟负载 4.91）；`npm run compile` 无报错；`node scripts/check-rules.mjs` 通过。反向验证：新用例先在没改的 `src/`（即 `origin/main` `879e771`）上构建、只跑新的几条：生成中那条红，卡片「已导出 PDF，没进 Obsidian … 存 PDF 3 页」不标黄，和真实页面现象一致（`red-old-code.txt`）；cancelled 那条在旧代码下本来就绿（旧代码从不认生成中）。证据目录 `~/Library/Application Support/chatgpt-clipper/evidence/2026-11-23-issue-35/`。
 - 验证：侦察在常浩真实 Chrome 里新开标签页做（只读结构和 ChatGPT 自己加载的前端脚本，没发消息）：答完的一轮外面是 `data-talvt-turn-state="complete"`，前端脚本里这个属性取这一轮的 status，比较值只有 `in_progress`、`cancelled`、`complete`。`in_progress` 没在真实页面上亲眼看到（要发提问触发生成，先问常浩）。修复本身替身通过（无头 Chromium + 仿 ChatGPT 长对话测试页）；未在真实环境验证：合并、重新构建、刷新插件后在真实 ChatGPT 生成中拉一次（S9 生成中那次）。
