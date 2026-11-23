@@ -1231,6 +1231,10 @@ describe('导出 PDF', () => {
     await card.locator('.pdf .ok, .pdf .bad').waitFor({ timeout: 30_000 });
     const row = await card.locator('.pdf').innerText();
     if (!(await card.locator('.pdf .ok').count())) return { row };
+    return { row, ...(await lastPdf(before)) };
+  };
+  // 等刚开始的那个下载完成，读出 PDF：文件路径、插件给的文件名、文字、页数、纸张；before 是导出前已下载的 PDF 个数
+  const lastPdf = async before => {
     let item;
     for (let i = 0; i < 50; i++) {
       [item] = await sw.evaluate(() => chrome.downloads.search({ orderBy: ['-startTime'], limit: 1 }));
@@ -1240,7 +1244,7 @@ describe('导出 PDF', () => {
     const names = await sw.evaluate(() => self.__pdfNames);
     assert.equal(names.length, before + 1, '该多下载一个 PDF');
     const info = poppler('pdfinfo', item.filename);
-    return { row, file: item.filename, name: names.at(-1), text: poppler('pdftotext', item.filename),
+    return { file: item.filename, name: names.at(-1), text: poppler('pdftotext', item.filename),
       pages: Number(info.match(/^Pages:\s+(\d+)/m)[1]), size: info.match(/^Page size:\s+(.+)$/m)[1] };
   };
   // 同一页上互相压住的字（分页把一块挪到下一页、外层没跟着变高时，后面的内容会叠上来）：横向重叠超过窄的那个字一半、
@@ -1257,13 +1261,19 @@ describe('导出 PDF', () => {
     }
     return out;
   };
-  const pull = async (pg, rib, dy) => {
+  const pull = async (pg, rib, dy, release = true) => {
     const b = await rib.boundingBox(), x = b.x + b.width / 2, y = b.y + 10;
     await pg.mouse.move(x, y);
     await pg.mouse.down();
     await pg.mouse.move(x, y + dy, { steps: 10 });
-    await pg.mouse.up();
+    if (release) await pg.mouse.up();
   };
+  // Vault 文件夹里的条目名（只导 PDF 不该多出任何东西）
+  const vaultNames = () => sw.evaluate(async () => {
+    const out = [];
+    for await (const [name] of (await navigator.storage.getDirectory()).entries()) out.push(name);
+    return out.sort();
+  });
 
   before(async () => {
     sw = ctx.serviceWorkers()[0];
@@ -1342,6 +1352,83 @@ describe('导出 PDF', () => {
       assert.ok(r.text.includes(`第 ${k} 个主题`), `该有第 ${k} 问的提问`);
     }
     await tp.close();
+  });
+
+  describe('拉过 200px 只导 PDF（#28）', () => {
+    let tp;
+    const mark = () => tp.locator('clipper-dock .card').evaluateAll(cs => cs.forEach(c => c.setAttribute('data-old', '')));
+    // 拉丝带松手后等卡片结束，再读出下载的 PDF
+    const pullPdf = async rib => {
+      await mark();
+      const before = await sw.evaluate(() => self.__pdfNames.length);
+      await pull(tp, rib, 250);
+      const card = tp.locator('clipper-dock .card:not([data-old])').filter({ has: tp.locator('.loc') }).first();
+      await card.waitFor({ timeout: 60_000 });
+      return { card: (await card.innerText()).replace(/\s+/g, ' '), ...(await lastPdf(before)) };
+    };
+    before(async () => {
+      tp = await ctx.newPage();
+      await tp.goto(THREAD_URL);
+      await tp.locator(`${MSG} clipper-ribbon`).first().waitFor({ state: 'attached' });
+    });
+    after(() => tp.close());
+
+    test('拉过 100px 仍是浅紫「松手收藏整段」，再拉过 200px 变灰蓝横纹「松手只导PDF」；拉回来又变紫', async () => {
+      const rib = tp.locator(`${MSG} clipper-ribbon button`).last();
+      await pull(tp, rib, 150, false);
+      assert.deepEqual(await rib.evaluate(b => [b.classList.contains('ready'), b.classList.contains('paper'), b.textContent]), [true, false, '松手收藏整段']);
+      const b = await rib.boundingBox();
+      await tp.mouse.move(b.x + b.width / 2, b.y + 10 + 250, { steps: 5 });
+      assert.deepEqual(await rib.evaluate(b => [b.classList.contains('paper'), b.textContent]), [true, '松手只导PDF']);
+      assert.ok((await rib.boundingBox()).height >= 300, '拉过 200px 丝带该跟着变长');
+      await tp.mouse.move(b.x + b.width / 2, b.y + 10 + 150, { steps: 5 });
+      assert.deepEqual(await rib.evaluate(b => [b.classList.contains('ready'), b.classList.contains('paper')]), [true, false]);
+      // 拉回 50px 以内松手：不收藏也不导出
+      await mark();
+      await tp.mouse.move(b.x + b.width / 2, b.y + 40, { steps: 5 });
+      await tp.mouse.up();
+      await new Promise(r => setTimeout(r, 500));
+      assert.equal(await tp.locator('clipper-dock .card:not([data-old])').count(), 0, '没拉到位不该有动作');
+    });
+
+    test('在最后一条上拉过 200px 松手：三步卡「读对话 → 排版 → 存 PDF」，PDF 有 6 问 6 答、文件名带「截至 HH-mm」；Vault 里什么都不多，丝带的收藏状态不变', async () => {
+      const names = await vaultNames(), rib = tp.locator(`${MSG} clipper-ribbon button`).last();
+      // 前面的用例可能已经收藏过这一条（丝带是绿的）：只看导出前后丝带的收藏状态不变
+      const saved = await rib.evaluate(b => b.classList.contains('done'));
+      const r = await pullPdf(rib);
+      assert.match(r.card, /^已导出 PDF，没进 Obsidian [\d.]+s ✓ 读对话 12 条 ✓ 排版 6 轮 ✓ 存 PDF \d+ 页 📄 已存到「下载」· \d+ 页 \d{4}-\d{2}-\d{2} 第 1 问.*（截至 \d{2}-\d{2}）\.pdf 在访达中显示$/, r.card);
+      assert.match(r.name, /^\d{4}-\d{2}-\d{2} 第 1 问.*（截至 \d{2}-\d{2}）\.pdf$/, r.name);
+      for (let k = 1; k <= 6; k++) {
+        assert.ok(r.text.includes(`${k}. 第 ${k} 问`), `该有第 ${k} 轮的小标题`);
+        assert.ok(r.text.includes(`第 ${k} 条回答的第 1 段`), `该有第 ${k} 条回答`);
+      }
+      assert.deepEqual(await vaultNames(), names, 'Vault 里不该多出东西');
+      assert.equal(await rib.evaluate(b => b.classList.contains('done')), saved, '只导 PDF 不该改丝带的收藏状态');
+    });
+
+    test('在中间一条（第 3 条）上拉：PDF 只到第 3 问第 3 答为止', async () => {
+      // 测试页的虚拟列表只渲染屏幕附近的行：按它自己记的行位置滚到第 3 条回答（第 6 行）
+      await tp.evaluate(() => { document.querySelector('.scroller').scrollTop = rows[5].top - 80; });
+      const row = tp.locator('[data-index="5"]');
+      await row.locator('clipper-ribbon').waitFor({ state: 'attached' });
+      const r = await pullPdf(row.locator('clipper-ribbon button'));
+      assert.match(r.card, /读对话 6 条 ✓ 排版 3 轮/, r.card);
+      assert.ok(r.text.includes('第 3 条回答的第 1 段'), '该有第 3 条回答');
+      assert.ok(!r.text.includes('第 4 问'), '不该有第 4 问');
+    });
+
+    test('这一条还在生成：跳过它的回答、提问照样放，卡片标黄写「第 6 轮还在生成，没导进去」', async () => {
+      await tp.locator('.scroller').evaluate(sc => { sc.scrollTop = sc.scrollHeight; });
+      await new Promise(r => setTimeout(r, 400));
+      const last = tp.locator(MSG).last();
+      await last.evaluate(e => e.setAttribute('data-is-streaming', 'true'));
+      const r = await pullPdf(last.locator('clipper-ribbon button'));
+      assert.match(r.card, /^已导出 PDF，但可能不完整/, r.card);
+      assert.ok(r.card.includes('第 6 轮还在生成，没导进去'), r.card);
+      assert.ok(r.text.includes('6. 第 6 问'), '还在生成的这一轮提问照样放');
+      assert.ok(r.text.includes('导出时还在生成，没导进去'), 'PDF 里写明');
+      assert.ok(!r.text.includes('第 6 条回答的第 1 段'), '还在生成的回答不该导进去');
+    });
   });
 
   test('导出失败：写「没导出成」和中文原因（Chrome 的英文报错翻成怎么办）、点「重试」再导；打印用的标签页都关掉', async () => {

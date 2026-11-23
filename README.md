@@ -37,7 +37,7 @@ npm run compile                   # 类型检查
 ## 代码结构
 
 ```
-src/entrypoints/content.ts   内容脚本：挂丝带、改版自检；单条 / 节选收藏（capture → produce 做长图和笔记）和整段收藏（captureThread）
+src/entrypoints/content.ts   内容脚本：挂丝带、改版自检；单条 / 节选收藏（capture → produce 做长图和笔记）、整段收藏（captureThread）和只导 PDF（exportUntil）
 src/entrypoints/background.ts 后台：按消息类型分发（handlers）：写 Vault、调 downloads、取跨域图片、打印 PDF；插件更新后给已开页面补装脚本
 src/entrypoints/options/     设置页：选 Vault 文件夹、重新授权、填 Obsidian 位置、版本与自检
 src/entrypoints/print/       导出 PDF 用的打印页（后台在后台标签页里打开）
@@ -48,7 +48,7 @@ src/lib/persist.ts           收藏的后两步：入库（写不进退回下载
 src/lib/adapter.ts           ChatGPT、Claude 两个站点对象：选择器和页面标记（只此一处，改版只改这里）
 src/lib/snapshot.ts          离线快照：内联计算样式 → 内嵌图片字体 → SVG foreignObject → PNG
 src/lib/markdown.ts          回答 → Markdown 正文；读全长代码；整篇笔记（frontmatter、提问、长图）
-src/lib/thread.ts            整段收藏：从头到尾滚动，逐条读每一问每一答
+src/lib/thread.ts            整段收藏和只导 PDF：从头滚动，逐条读每一问每一答（只导 PDF 读到被拉的那一条为止）
 src/lib/jump.ts              跳回原回答：按笔记链接里的指纹找到那条回答
 src/lib/pdf.ts               导出 PDF：把快照副本排成打印页的 HTML，分段送后台
 src/lib/vault.ts             写进 Vault 的统一出口，实现按职责分在 vault/ 下：

@@ -90,7 +90,7 @@ single-context：根目录 `GLOSSARY.md` 与 `docs/adr/`，用到时再建。见
 - 数据对象（只读取、存档，不算执行方）：
   - ChatGPT 网页 `chatgpt.com`：用户点选的那条回答、选中的段落或整段对话，从页面上读取；回答里的图片由后台从 `images.openai.com`、`*.oaiusercontent.com` 取（不带 cookie，见 `wxt.config.ts` 的 `host_permissions`）。
   - Claude 网页 `claude.ai`：只认对话页 `/chat/…`，读取方式同上。
-  - 产出写到：用户在设置页选定的 Obsidian 文件夹；没选或写不进时退回 Chrome 下载目录 `chatgpt-clipper/`；单条和节选收藏的长图同时复制到剪贴板（FR-14）；点「导出 PDF」时 PDF 存进 Chrome「下载」根目录（FR-15）。
+  - 产出写到：用户在设置页选定的 Obsidian 文件夹；没选或写不进时退回 Chrome 下载目录 `chatgpt-clipper/`；单条和节选收藏的长图同时复制到剪贴板（FR-14）；点「导出 PDF」（FR-15）或丝带拉过 200px 只导 PDF（FR-16）时 PDF 存进 Chrome「下载」根目录。
 - 对外开放：无（没有 MCP，没有 `externally_connectable`，不给外部程序或其他扩展留接口）。
 - 第一次加 AI 功能时，按全局规则 P-13（`~/.claude/CLAUDE.md` 第 14 节「应用里的 AI 接入写进设置」）补设置栏，并改写本节。
 

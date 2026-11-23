@@ -14,9 +14,10 @@ const RIBBON_W = 18, RIBBON_LEFT = -(ANSWER_GUTTER - 1);
 // 丝带上的字都竖着写在丝带上，选中和整段都是斜纹「荧光笔」：选中蓝色往右下斜，整段紫色往右上斜（2026-11-04 用户选「丝带统一」A 版）；
 // 深色斜纹上的白字看不清，改成浅色斜纹配深色字（同日选「丝带清晰度」B 版），丝带加宽到 18px。
 // 往下拉丝带收藏整段对话（2026-11-04 用户选定「拉长书签」A 版）：往下移动超过 PULL_START 才算拉，不然算点击；
-// 拉过 PULL_READY 松手就收整段；丝带最长拉到 60 + PULL_MAX
-export const PULL_START = 6, PULL_READY = 100;
-const PULL_MAX = 220;
+// 拉过 PULL_READY 松手就收整段；再拉过 PULL_PDF 变灰蓝横纹，松手只导出 PDF、不进 Obsidian（2026-11-23 常浩选「拉得更长」二版，#28）；
+// 丝带最长拉到 60 + PULL_MAX
+export const PULL_START = 6, PULL_READY = 100, PULL_PDF = 200;
+const PULL_MAX = 320;
 
 const RIBBON_CSS = `
 :host{all:initial;display:block;position:absolute;top:0;bottom:0;left:${RIBBON_LEFT}px;width:${RIBBON_W}px;pointer-events:none}
@@ -31,11 +32,13 @@ const RIBBON_CSS = `
 .rib.pick{opacity:1;background:repeating-linear-gradient(135deg,#bcd2ff 0 5px,#dce7ff 5px 10px)}
 .rib.pull{opacity:1;transition:none;cursor:grabbing;background:repeating-linear-gradient(45deg,#ffd987 0 5px,#ffeabd 5px 10px)}
 .rib.ready{background:repeating-linear-gradient(45deg,#cdc2ff 0 5px,#e4ddff 5px 10px)}
+.rib.paper{background:repeating-linear-gradient(0deg,#c3cde0 0 4px,#e8ecf4 4px 8px)}
 .vt{display:none;position:absolute;left:0;right:0;top:7px;writing-mode:vertical-rl;text-orientation:upright;color:#7a4b00;letter-spacing:1px;white-space:nowrap;
   font:700 11.5px/${RIBBON_W}px -apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",sans-serif}
 .rib.long .vt,.rib.pick .vt{display:block}
 .rib.pick .vt{color:#1438b8}
-.rib.ready .vt{color:#3a1fc2}`;
+.rib.ready .vt{color:#3a1fc2}
+.rib.paper .vt{color:#22324f}`;
 
 const DOCK_CSS = `
 :host{all:initial}
@@ -45,8 +48,8 @@ const DOCK_CSS = `
 .hd{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .hd b{font-size:13px;font-weight:600;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .hd span{color:#6b6b6b;flex:none}
-ol{list-style:none;margin:12px 0 0;padding:0;display:grid;grid-template-columns:repeat(${STEPS.length},1fr);position:relative}
-ol::before{content:"";position:absolute;left:${50 / STEPS.length}%;right:${50 / STEPS.length}%;top:8px;height:2px;background:#ececec}
+ol{list-style:none;margin:12px 0 0;padding:0;display:grid;grid-template-columns:repeat(var(--n),1fr);position:relative}
+ol::before{content:"";position:absolute;left:calc(50% / var(--n));right:calc(50% / var(--n));top:8px;height:2px;background:#ececec}
 li{text-align:center;position:relative;color:#9a9a9a;font-size:11px}
 li i{display:block;width:18px;height:18px;margin:0 auto 4px;border-radius:50%;background:#fff;border:2px solid #dcdcdc;
   font-style:normal;font-size:10px;line-height:14px;color:#fff;font-weight:700}
@@ -100,8 +103,9 @@ function shadowHost(tag: string, css: string): { host: HTMLElement; root: Shadow
 
 /** 在回答里挂一条丝带（绝对定位在左侧空白处，不影响回答布局）。
  *  pick(n)：回答里选中了 n 块时丝带拉长成浅蓝斜纹「荧光笔」，深蓝字竖着写「收藏选中·N块」，点它只收这几块（FR-12）；n 为 0 恢复。
- *  按住往下拉：丝带跟着变长（浅琥珀斜纹「继续下拉」），拉过 PULL_READY 变浅紫斜纹、写「松手收藏整段」，松手调 onPull；不到位松手就弹回 */
-export function mountRibbon(answer: HTMLElement, onClick: () => void, onPull: () => void) {
+ *  按住往下拉：丝带跟着变长（浅琥珀斜纹「继续下拉」），拉过 PULL_READY 变浅紫斜纹、写「松手收藏整段」，松手调 onPull；
+ *  拉过 PULL_PDF 变灰蓝横纹、写「松手只导PDF」，松手调 onPdf；不到位松手就弹回 */
+export function mountRibbon(answer: HTMLElement, onClick: () => void, onPull: () => void, onPdf: () => void) {
   if (getComputedStyle(answer).position === 'static') answer.style.position = 'relative';
   const { host, root } = shadowHost('clipper-ribbon', RIBBON_CSS);
   root.innerHTML += '<div class="st"><button class="rib" title="收藏这条回答" aria-label="收藏这条回答"><span class="vt"></span></button></div>';
@@ -110,12 +114,12 @@ export function mountRibbon(answer: HTMLElement, onClick: () => void, onPull: ()
   const draw = () => {
     const on = btn.classList.contains('on');
     const pick = picked > 0 && state !== 'busy', label = `收藏选中·${picked}块`;
-    btn.className = pull >= 0 ? `rib pull ${pull >= PULL_READY ? 'ready' : ''} ${pull > 50 ? 'long' : ''}`
+    btn.className = pull >= 0 ? `rib pull ${pull >= PULL_PDF ? 'paper' : pull >= PULL_READY ? 'ready' : ''} ${pull > 50 ? 'long' : ''}`
       : `rib ${state !== 'idle' ? state : ''} ${pick ? 'pick' : ''}`;
     btn.classList.toggle('on', on);
     // 选中时丝带拉长到放得下竖排字（每字约 13px）
     btn.style.height = pull >= 0 ? `${60 + pull}px` : pick ? `${Math.max(104, 22 + label.length * 13)}px` : '';
-    vt.textContent = pull >= 0 ? (pull >= PULL_READY ? '松手收藏整段' : '继续下拉') : pick ? label : '';
+    vt.textContent = pull >= 0 ? (pull >= PULL_PDF ? '松手只导PDF' : pull >= PULL_READY ? '松手收藏整段' : '继续下拉') : pick ? label : '';
     btn.title = picked ? `只收藏选中的 ${picked} 块` : '收藏这条回答';
     btn.setAttribute('aria-label', btn.title);
   };
@@ -137,10 +141,11 @@ export function mountRibbon(answer: HTMLElement, onClick: () => void, onPull: ()
       removeEventListener('pointermove', move);
       removeEventListener('pointerup', up);
       removeEventListener('pointercancel', up);
-      const ready = pull >= PULL_READY;
+      const pdf = pull >= PULL_PDF, ready = pull >= PULL_READY;
       pull = -1;
       draw();   // 去掉内联高度，丝带按 transition 弹回原长
-      if (ready) onPull();
+      if (pdf) onPdf();
+      else if (ready) onPull();
     };
     // 拉的时候指针会离开丝带，事件挂在窗口上
     addEventListener('pointermove', move);
@@ -181,17 +186,20 @@ export interface Place { icon: string; head: string; sub: string; warn?: boolean
 /** 卡片底部的「导出 PDF」（FR-15，2026-11-10 常浩选 A 版）：run 导出，返回页数和「在访达中显示」 */
 export type Pdf = () => Promise<{ pages: number; show: () => void }>;
 
-/** 右下角一张进度卡（B 版，用户 2026-11-02 选定）：顶部是收藏状态，四步横排成一条进度线，每步下面一个短结果；结束时给「存到哪里」和操作按钮 */
-export function progressCard() {
+/** 只导出 PDF（拉过 PULL_PDF 松手，#28）的进度卡三步 */
+export const PDF_STEPS = ['读对话', '排版', '存 PDF'] as const;
+
+/** 右下角一张进度卡（B 版，用户 2026-11-02 选定）：顶部是收藏状态，四步横排成一条进度线，每步下面一个短结果；结束时给「存到哪里」和操作按钮。
+ *  steps：收藏是四步 STEPS，只导出 PDF 是三步 PDF_STEPS */
+export function progressCard(steps: readonly string[] = STEPS, headline = '收藏中…') {
   const el = document.createElement('div'), t0 = performance.now();
   el.className = 'card';
-  const states: StepState[] = STEPS.map(() => ''), notes: string[] = STEPS.map(() => '');
+  const states: StepState[] = steps.map(() => ''), notes: string[] = steps.map(() => '');
   const draw = () => {
-    el.innerHTML = `<div class="hd"><b></b><span>${((performance.now() - t0) / 1000).toFixed(1)}s</span></div><ol>${STEPS.map(
+    el.innerHTML = `<div class="hd"><b></b><span>${((performance.now() - t0) / 1000).toFixed(1)}s</span></div><ol style="--n:${steps.length}">${steps.map(
       (s, i) => `<li class="${states[i]}"><i>${ICON[states[i]!]}</i>${s}${notes[i] ? `<small>${escapeHtml(notes[i]!)}</small>` : ''}</li>`).join('')}</ol>`;
     el.querySelector('b')!.textContent = headline;
   };
-  let headline = '收藏中…';
   draw();
   dock().appendChild(el);
   let timer = 0;
