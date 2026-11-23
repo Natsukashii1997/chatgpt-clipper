@@ -6,8 +6,9 @@ import { scrollParent } from './dom';
 // 没有下一条时每步滚半屏（相邻两步渲染的行有重叠，不漏行）；滚完等行渲染出来（实测 150ms 内）；一条找不到时最多再等几次
 const STEP = 0.5, STEP_WAIT = 400, TRIES = 3;
 
-/** 按顺序把每一条交给 read（k 从 1 起）。返回读了几条、漏了几条（顺序号跳过的，正常是 0） */
-export async function readThread(read: (it: ThreadItem, k: number) => Promise<void>): Promise<{ count: number; missed: number }> {
+/** 按顺序把每一条交给 read（k 从 1 起）。until：读到顺序号为它的那一条就停（只导 PDF 时「从开头到这一条」，#28）。
+ *  返回读了几条、漏了几条（顺序号跳过的，正常是 0） */
+export async function readThread(read: (it: ThreadItem, k: number) => Promise<void>, until = Infinity): Promise<{ count: number; missed: number }> {
   const first = threadItems()[0];
   if (!first) throw new Error('页面上没找到对话');
   const sc = scrollParent(first.el), start = sc.scrollTop;
@@ -19,6 +20,7 @@ export async function readThread(read: (it: ThreadItem, k: number) => Promise<vo
     await wait(STEP_WAIT);
     for (;;) {
       const next = after(last)[0];
+      if (next && next.order > until) break;
       if (next) {
         // 先滚到这一条开头、等它渲染好，再按顺序号重新找一次：页面可能重绘过，先前拿到的节点已不在页面上（量出来 0×0）
         sc.scrollTop += next.el.getBoundingClientRect().top - top();
@@ -32,6 +34,7 @@ export async function readThread(read: (it: ThreadItem, k: number) => Promise<vo
         missed += it.order - last - 1;
         await read(it, ++count);
         last = it.order;
+        if (last >= until) break;
         continue;
       }
       // 到底后再等一轮，最后几行可能还没渲染

@@ -57,11 +57,13 @@ export function pdfHtml(d: PdfDoc): string {
     + `<header><h1>${esc(d.title)}</h1><div class="meta">${esc(d.site)} · ${date} ${time}（北京时间）<br>${esc(d.url)}</div></header>${rounds}`;
 }
 
-/** 分段送到后台打印，存进「下载」：name 文件名（不带 .pdf）。返回页数和下载编号（「在访达中显示」用） */
-export async function exportPdf(d: PdfDoc, name: string): Promise<{ pages: number; id: number }> {
+/** 分段送到后台打印，存进「下载」：name 文件名（不带 .pdf）；printing：内容送完、开始打印时调（进度卡换到「存 PDF」一步）。
+ *  返回页数和下载编号（「在访达中显示」用） */
+export async function exportPdf(d: PdfDoc, name: string, printing?: () => void): Promise<{ pages: number; id: number }> {
   const html = pdfHtml(d), job = crypto.randomUUID();
   const width = Math.max(...d.rounds.flatMap(r => r.answers.map(a => ('width' in a ? a.width : 0))), 1);
   for (let i = 0; i < html.length; i += PART_CHARS) await send({ type: 'pdf-part', job, text: html.slice(i, i + PART_CHARS) }, 0);
+  printing?.();
   // 不限时：后台打印的每一步自己有限时
   const res = await send({ type: 'pdf', job, name, width }, 0);
   return { pages: res.pages, id: res.ids[0] ?? 0 };

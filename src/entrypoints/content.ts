@@ -1,4 +1,4 @@
-import { answerBlocks, answerChars, answerFingerprint, countQuestions, answerKey, answerQuestion, answerTitle, findAnswers, inChat, NOISE, repairRequest, selectedBlocks, SITE_NAME, userText } from '@/lib/adapter';
+import { answerBlocks, answerChars, answerFingerprint, answerStreaming, countQuestions, answerKey, answerQuestion, answerTitle, findAnswers, inChat, NOISE, repairRequest, selectedBlocks, SITE_NAME, threadItems, userText } from '@/lib/adapter';
 import { answerToMarkdown, buildNote, buildThreadNote, readCodeEditors, type CodeRead, type ThreadRound } from '@/lib/markdown';
 import { ask, send } from '@/lib/ask';
 import { BUILD, PAGES, type DownloadFile } from '@/lib/messages';
@@ -8,9 +8,9 @@ import { clipHash, jumpToClip } from '@/lib/jump';
 import { beijingTime, folderName, noteName } from '@/lib/naming';
 import { exportPdf, pdfAnswer, type PdfAnswer, type PdfDoc, type PdfRound } from '@/lib/pdf';
 import { describeSingle, describeThread, saveSingle, saveThread, type Told } from '@/lib/persist';
-import { embedResources, styler, takeSnapshot, toPng, type Missed } from '@/lib/snapshot';
+import { embedResources, styler, takeSnapshot, toPng, type Missed, type Snapshot } from '@/lib/snapshot';
 import { readThread } from '@/lib/thread';
-import { mountRibbon, notice, progressCard, STEPS, UI_ATTR, type Pdf, type Place, type RibbonState } from '@/lib/ui';
+import { mountRibbon, notice, PDF_STEPS, progressCard, STEPS, UI_ATTR, type Pdf, type Place, type RibbonState } from '@/lib/ui';
 
 export default defineContentScript({
   matches: PAGES,
@@ -35,7 +35,7 @@ export default defineContentScript({
             // 节选不改丝带的收藏状态：收的时候转蓝，收完恢复
             if (blocks.length) void capture(el, s => ribbon.set(s === 'busy' ? 'busy' : r!.state), blocks);
             else void capture(el, r!.set);
-          }, () => void captureThread());
+          }, () => void captureThread(), () => void exportUntil(el));
           const fresh: Ribbon = { el, state: 'idle', text: -1, set: s => { fresh.state = s; ribbon.set(s); }, pick: ribbon.pick };
           ribbons.set(el, (r = fresh));
         }
@@ -353,18 +353,85 @@ async function captureThread() {
 
 /** 整段收藏里的一条回答：长图和正文，做法同单条收藏 */
 async function readAnswer(el: HTMLElement): Promise<ThreadAnswer> {
-  const id = await answerFingerprint(el), st = styler();
+  const id = await answerFingerprint(el), { snap, body, lost } = await snapAnswer(el);
+  return { id, png: await blobToDataUrl(await toPng(snap)), height: snap.height, body, pdf: pdfAnswer(snap), lost };
+}
+
+/** 一条回答的快照（图片、字体已嵌进）和正文。快照和正文紧接着做（中间不等待），后面导出图片时回答的节点可能已被页面换掉 */
+async function snapAnswer(el: HTMLElement): Promise<{ snap: Snapshot; body: string; lost: string[] }> {
+  const st = styler();
   let code: Map<Element, CodeRead>;
   try {
     code = await readCodeEditors(el, l => st.copy(l));
   } finally {
     st.dispose();
   }
-  // 快照和正文紧接着做（中间不等待），后面导出图片时回答的节点可能已被页面换掉
   const snap = takeSnapshot(el, { exclude: `[${UI_ATTR}]`, drop: NOISE, codeLines: new Map([...code].map(([e, c]) => [e, c.lines])) });
   const body = answerToMarkdown(el, { exclude: `[${UI_ATTR}]`, code });
-  const lost = missedText(await embedResources(snap, fetchImage));
-  return { id, png: await blobToDataUrl(await toPng(snap)), height: snap.height, body, pdf: pdfAnswer(snap), lost };
+  return { snap, body, lost: missedText(await embedResources(snap, fetchImage)) };
+}
+
+/** 只导出 PDF（2026-11-23 常浩选「拉得更长」二版，#28）：丝带拉过 PULL_PDF 松手，从对话开头读到这一条，排成 PDF 存进「下载」。
+ *  不写 Vault、不做长图、不动剪贴板、不改丝带的收藏状态。这一条还在生成就跳过它的回答（提问照样放），卡片和 PDF 里写明。
+ *  文件名「日期 第一问前 30 字（截至 HH-mm）.pdf」：对话中途会导好几份，带时刻才分得清 */
+async function exportUntil(el: HTMLElement) {
+  if (threading) return;
+  threading = true;
+  const card = progressCard(PDF_STEPS, '正在读对话…'), rounds: PdfRound[] = [], warns: string[] = [], started = new Date();
+  const run = () => { card.close(); void exportUntil(el); };
+  let title = '';
+  try {
+    const until = threadItems().find(i => i.el === el)?.order;
+    if (until === undefined) throw new Error('页面上没找到这条回答，滚动一下再拉');
+    const streaming = answerStreaming(el);
+    card.step(0, 'on');
+    const { count, missed } = await readThread(async (it, k) => {
+      card.title(`正在读第 ${k} 条`);
+      card.step(0, 'on', `${k} 条`);
+      await nextFrame();
+      if (it.role === 'user') {
+        const text = userText(it.el);
+        title ||= text.replace(/\s+/g, ' ').trim().slice(0, 30);
+        rounds.push({ question: text, answers: [] });
+        return;
+      }
+      if (!rounds.length) rounds.push({ question: '', answers: [] });
+      const answers = rounds.at(-1)!.answers;
+      if (it.order === until && streaming) {
+        answers.push({ error: '导出时还在生成，没导进去' });
+        warns.push(`第 ${rounds.length} 轮还在生成，没导进去`);
+        return;
+      }
+      try {
+        const { snap, lost } = await snapAnswer(it.el);
+        if (lost.length) warns.push(`第 ${k} 条：${lost.join('、')}`);
+        answers.push(pdfAnswer(snap));
+      } catch (e) {
+        const reason = e instanceof Error ? e.message : String(e);
+        warns.push(`第 ${k} 条：${reason}`);
+        answers.push({ error: reason });
+        console.error(`[chatgpt-clipper] 导出 PDF 第 ${k} 条失败`, e);
+      }
+    }, until);
+    if (missed) warns.push(`漏了 ${missed} 条（滚动时没渲染出来）`);
+    title ||= document.title.slice(0, 30);
+    card.step(0, missed ? 'warn' : 'ok', `${count} 条`);
+    card.title('正在导出 PDF…');
+    card.step(1, 'on');
+    const stamp = `截至 ${beijingTime(started).time.replace(':', '-')}`, name = `${folderName(title, started)}（${stamp}）`;
+    const r = await exportPdf({ title: `${title}（${stamp}）`, site: SITE_NAME, url: `${location.origin}${location.pathname}`, captured: started, rounds, thread: true },
+      name, () => { card.step(1, 'ok', `${rounds.length} 轮`); card.step(2, 'on'); });
+    card.step(2, 'ok', `${r.pages} 页`);
+    card.finish(true, warns.length ? '已导出 PDF，但可能不完整' : '已导出 PDF，没进 Obsidian',
+      { icon: '📄', head: `已存到「下载」· ${r.pages} 页`, sub: [`${name}.pdf`, ...warns].join('；'), warn: warns.length > 0 },
+      { label: '在访达中显示', run: () => void send({ type: 'show', id: r.id }) }, warns.length ? 0 : 8000);
+  } catch (e) {
+    console.error('[chatgpt-clipper] 导出 PDF 中断', e);
+    card.finish(false, '没导出成 PDF', { icon: '⚠️', head: title || document.title,
+      sub: browser.runtime?.id ? (e instanceof Error ? e.message : String(e)) : '插件刚更新过，刷新这个页面后再导' }, { label: '重试', run });
+  } finally {
+    threading = false;
+  }
 }
 
 /** 给回答里不含要收的块的部分打 CUT：从回答往下，含要收的块就往里走，不含就整棵打上 */

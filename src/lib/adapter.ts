@@ -69,6 +69,8 @@ interface Site {
   block: string;
   /** 整段收藏（FR-13）：一条消息在整段对话里的顺序号；i 是它在页面上现有消息里的序号 */
   order(el: HTMLElement, i: number): number;
+  /** 这条回答是不是还在生成（只导 PDF 时跳过它，#28） */
+  streaming(el: HTMLElement): boolean;
   /** 转 Markdown 用到的页面标记 */
   marks: Marks;
 }
@@ -91,6 +93,8 @@ const chatgptSite: Site = {
   block: 'p, h1, h2, h3, h4, h5, h6, ul, ol, table, pre, blockquote, hr, img, figure, .katex-display, [data-client-defined-widget], [data-d-component="grid"], [data-d-has-border], [data-learning-block]',
   // 全部轮次都在页面里，用页面顺序
   order: (_el, i) => i,
+  // 生成中输入框的发送键换成停止键；只算最后一条回答（未在真实页面侦察，#28 合并后在真实 Chrome 里验）
+  streaming: el => !!document.querySelector('[data-testid="stop-button"]') && findAnswers().at(-1) === el,
   marks: CHATGPT_MARKS,
 };
 
@@ -111,6 +115,8 @@ const claudeSite: Site = {
   block: '[data-cds="Prose"] .standard-markdown > *, [data-cds="Card"][data-file-row-card]',
   // 对话行的 data-index：虚拟列表，只渲染屏幕附近的行，远处的会卸掉（docs/recon/2026-11-04-整段收藏侦察记录.md）
   order: (el, i) => Number(el.closest<HTMLElement>('[data-testid="transcript-row"][data-index]')?.dataset.index ?? i),
+  // 生成中的回答带 data-is-streaming="true"（docs/recon/2026-11-03-Claude侦察记录.md）
+  streaming: el => el.closest('[data-is-streaming]')?.getAttribute('data-is-streaming') === 'true',
   // 回答基本是标准 HTML：代码块是普通 pre > code.language-*，公式同样是 KaTeX；没有 DIL 组件、文档块、来源胶囊、代码编辑器
   marks: {
     ...CHATGPT_MARKS,
@@ -129,6 +135,8 @@ export const SITE = site.key, SITE_NAME = site.name, ANSWER_SELECTOR = site.answ
 export const inChat = () => site.chatPath.test(location.pathname);
 /** 页面上的提问条数（改版自检用：有对话却认不出回答） */
 export const countQuestions = () => document.querySelectorAll(site.question).length;
+/** 这条回答还在生成 */
+export const answerStreaming = (el: HTMLElement) => site.streaming(el);
 
 /** 改版时交给 Claude 的修复请求（FR-9）：只有页面结构的统计——选择器命中数、对话区的 data- 属性名和次数，
  *  外加名字里带 testid、role、key、turn 的界面标记的取值（编号换成 ID、数字换成 N，回答标记改了一眼能看出）；

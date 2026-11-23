@@ -1,8 +1,15 @@
 # 当前状态
 
-当前阶段目标：按 2026-11-20 评估结果分批优化，已收尾（2026-11-22）。A、B、C、E、PRD 删减、清理旧 worktree 都已做完并合并；D 批常浩 11-22 说先不做（⏸）。没有进行中的工作；以后要做 D，由常浩重新提起。
+当前阶段目标：只导出 PDF、不进 Obsidian（FR-16，#28）。常浩 2026-11-23 提出，看过两轮三版预览后选「丝带上做 · 拉得更长」二版；已实现、PR 待合并，合并后要在真实 Chrome 里走 S9。评估后分批优化那条主线 11-22 已收尾（D ⏸）。
 
-更新：2026-11-22。A、B（#22）、C（#24，`981cb45`）、E（#25，`386d25d`）、PRD 三处删减（#26，`5a1fead`）都已合并，旧 worktree 已清。D 批常浩 11-22 说先不做（经「牛马之家｜数码世界数据路径默认值改到应用目录」会话转达，常浩原话「你把所有的 to do 都列出来，然后给出你的推荐，然后我全部按推荐去做。」，推荐是先不做：两项都碰 DECIDED 里定过的判定和数据格式，D② 还要改写 Vault 里已有笔记、难回滚，功能已验收稳定，收益小风险大）。主线收尾，下一步：无，等常浩提新需求。
+更新：2026-11-23。#28 在 `claude/28-pull-pdf` 上做完，全量测试结果见下一节；下一步：常浩回「合并」→ 合并、主目录重新构建 → 刷新插件 → 真实 Chrome 走冒烟清单 S9（ChatGPT、Claude 各一次，再在生成中拉一次）。
+
+### 主线：只导出 PDF｜完成 2/4
+
+- ✅ 判断能不能做、出入口三版（常浩选 B）→ 嫌按 ⌥ 费劲，再出丝带三版（常浩选二版「拉得更长」）
+- ✅ 实现、测试（本 PR）
+- ⏳ 合并后在真实 Chrome 里验 S9；ChatGPT「正在生成」的停止键标记 `[data-testid="stop-button"]` 是没侦察过的，要一起验
+- ⏳ 常浩验收后，DECIDED 那行补提交号和「常浩验收」
 
 ### 主线：评估后分批优化｜完成 6/7（已收尾，D ⏸）
 
@@ -15,6 +22,17 @@
 - ✅ 清理旧 worktree（常浩 2026-11-21 经飞书回「全部给推荐」）：删了 claude-8-image-answer、claude-e-smoke、codex-audit-fix-1112、Sandbox 下的 hooks05 四个本机目录和本地分支，远端没动；`chatgpt-clipper-l07` 是别的会话的，没动
 
 
+
+## 只导出 PDF：丝带拉过 200px 松手只导 PDF（2026-11-23，Claude，常浩先后选入口 B 版、丝带二版「拉得更长」，说选定即视为对丝带改动的确认；已提交、PR 待合并、未发布）
+
+- 时间：开工 `2026-11-23 12:50`。★ 来由：常浩在对话进行中要把内容导出来做过程评审，不需要进 Obsidian；原来的导出 PDF（FR-15）只在收藏完的卡片上，收藏一定写 Vault。
+- 改了哪些文件：`src/lib/ui.ts`（丝带拉过 `PULL_PDF` 200px 变灰蓝横纹 `.paper`、写「松手只导PDF」，松手调新的第四个参数 `onPdf`；最长拉到 60 + 320；`progressCard()` 可传步骤和开头标题，加 `PDF_STEPS` 三步，进度线按 `--n` 排）；`src/entrypoints/content.ts`（新 `exportUntil()`：从开头读到被拉的这一条、只排 PDF、存「下载」，文件名带「截至 HH-mm」，这一条还在生成就跳过；整段收藏和它共用新拆出的 `snapAnswer()`）；`src/lib/thread.ts`（`readThread()` 加 `until`，读到那一条就停）；`src/lib/adapter.ts`（各站 `streaming()`、导出 `answerStreaming()`）；`src/lib/pdf.ts`（`exportPdf()` 加 `printing` 回调，卡片换到「存 PDF」一步）；`tests/e2e.test.mjs`（「拉过 200px 只导 PDF」四条：变色与拉回、整段 6 问 6 答且 Vault 不多东西、中间一条只到第 3 轮、还在生成跳过；`exportFrom` 拆出 `lastPdf`）；文档：`docs/PRD.md`（FR-13 补一句、新 FR-16）、`docs/DECIDED.md`（新一行）、`GLOSSARY.md`（「只导 PDF」、丝带一条）、`README.md`、`AGENTS.md`「AI 接入」产出一行、`docs/acceptance/真实Chrome冒烟清单.md`（新 S9，触发表两行）。已登记 DECIDED.md。
+- 测试：`npm run build && npm test` 第一遍 `ℹ pass 111` / `ℹ fail 1`（`full.txt`：新用例断言「丝带不变已收藏」，但全量里前面的用例已收藏过同一条，丝带本来就是绿的；改成断言导出前后状态不变）；改后 `npm test` 原样结果 `ℹ tests 112` / `ℹ pass 112` / `ℹ fail 0`（`full-2.txt`，开始时 1 分钟负载 16.64）；`npm run compile` 无报错；`node scripts/check-rules.mjs` 通过。只跑新用例的两遍：第一遍 4 条错 2 条（卡片文字里的「✓」没算进正则、滚动方式让第 3 条没渲染出来，都是测试写法），改后 4 条全过（`e2e-pdf-2.txt`）。没做反向验证（新用例断言的横纹丝带和只导 PDF 在旧代码里都不存在）。证据目录 `~/Library/Application Support/chatgpt-clipper/evidence/2026-11-23-issue-28/`。
+- 验证：替身（Playwright 无头 Chromium + 仿 Claude 虚拟列表的测试页 + 内存假文件系统）；PDF 用本机 poppler 读出文字核对。未在真实环境验证：没在常浩的真实 Chrome 里拉过；ChatGPT 上「还在生成」靠输入框停止键 `[data-testid="stop-button"]`，这个标记没侦察过，测试只覆盖了 Claude 的 `data-is-streaming`。
+- 截图：无（设计预览在 https://claude.ai/artifact/EmPx9VyGgH8J8rACQpRtcj ，入口三版在 https://claude.ai/artifact/VSpChc2khYcrLjJySfhCf2 ）。
+- 发布与回读：未发布；主目录 `.output/chrome-mv3` 没动，合并后要 `npm run build` 再到扩展页刷新。
+- 与授权不一致之处、遗留问题、范围外发现：① 常浩没逐条回三个细节（默认整段、生成中跳过、文件名带时刻），按预览页写明的推荐做了。② 拉在中间某条上的范围是「从开头到这一条」，常浩在预览页看过这个说法，没单独确认。③ 卡片导好后 8 秒自动关（有标黄的不关），沿用收藏卡的做法。④ 只做了电脑版。
+- 本轮新坑：无。
 
 ## E 批：真实 Chrome 冒烟清单（2026-11-21，Claude，常浩回「先做 E」；已合并 PR #25（`386d25d`），无需发布）
 
