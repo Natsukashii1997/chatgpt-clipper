@@ -2,9 +2,9 @@
 
 当前阶段目标：只导出 PDF、不进 Obsidian（FR-16，#28）。常浩 2026-11-23 提出，看过两轮三版预览后选「丝带上做 · 拉得更长」二版；已实现、PR 待合并，合并后要在真实 Chrome 里走 S9。评估后分批优化那条主线 11-22 已收尾（D ⏸）。
 
-更新：2026-11-23 15:50。只导 PDF（FR-16）已合并并在真实 Chrome 里验过：Claude 站、ChatGPT 短对话、ChatGPT 长对话（#30、#32 修完）都通过。#35「还在生成」认不出已修（改认每一轮外面的 `data-talvt-turn-state="in_progress"`），PR 待合并；合并后要在真实 Chrome 里趁生成中拉一次（要发一条提问，先问常浩）。还剩：长对话整段收藏、Claude 站新版复验；常浩验收后 DECIDED 补提交号。测试用的 ChatGPT 对话（现名「Chrome扩展开发流程」）是 Claude 15:28 经常浩同意发的，留在他的历史里，没删。
+更新：2026-11-23 16:00。只导 PDF（FR-16）四个修复都已合并（#29、#31、#34、#36），合并后在真实 Chrome 里全部验过：Claude 站、ChatGPT 短对话、ChatGPT 长对话、ChatGPT 生成中跳过（#35）、长对话整段收藏。剩下只有常浩验收：验收后 DECIDED 那行补提交号，并清理已合并的 worktree 和本地分支（要常浩确认）。测试用的 ChatGPT 对话「Chrome扩展开发流程」里现在有两轮（15:28、15:48 都经常浩同意发），留在他的历史里，没删。
 
-### 主线：只导出 PDF｜完成 6/7
+### 主线：只导出 PDF｜完成 8/9
 
 - ✅ 判断能不能做、出入口三版（常浩选 B）→ 嫌按 ⌥ 费劲，再出丝带三版（常浩选二版「拉得更长」）
 - ✅ 实现、测试，PR #29 已合并（`81b2aea`）
@@ -12,8 +12,9 @@
 - ✅ 真实 Chrome：Claude 站通过（6 问 6 答、8 页）；ChatGPT 短对话通过；丝带横纹和手势正常
 - ✅ #32 第一版（PR #33，`7b47119`）已合并，但真实长对话仍只读到 1 条
 - ✅ #32 第二版：滚动前发滚轮事件，PR #34 已合并（`13c63bd`）；真实 Chrome 长对话 5 轮 10 条全读到
-- ▶ 「还在生成时跳过」：15:29 真实 Chrome 上 ChatGPT 不通过（#35）；已改认 `data-talvt-turn-state="in_progress"`，替身通过，PR 待合并，合并后真实 Chrome 复验
-- ⏳ 长对话整段收藏、Claude 站在新版下复验；常浩验收后 DECIDED 那行补提交号
+- ✅ 「还在生成时跳过」（#35）：改认 `data-talvt-turn-state="in_progress"`，PR #36 已合并（`b9d2903`）；真实 Chrome 生成中拉一次，卡片标黄「第 2 轮还在生成，没导进去」，PDF 只有提问
+- ✅ 新版下复验：ChatGPT 长对话整段收藏 5 问 5 答全收、滚回原位；Claude 站只导 PDF 3 轮 9 页
+- ❓ 常浩验收：验收后 DECIDED 那行补提交号；清理已合并的 worktree `../chatgpt-clipper-28`、`../chatgpt-clipper-35` 和本地分支（要常浩确认）
 
 ### 主线：评估后分批优化｜完成 6/7（已收尾，D ⏸）
 
@@ -27,14 +28,15 @@
 
 
 
-## ChatGPT「还在生成」改认每一轮的状态属性（2026-11-23，Claude，接 #35 交接卡，修 bug 让 FR-16 回到原定行为；已提交、PR 待合并、未发布）
+## ChatGPT「还在生成」改认每一轮的状态属性（2026-11-23，Claude，接 #35 交接卡，修 bug 让 FR-16 回到原定行为；常浩经 agent-hud 回「Merge」，PR #36 已合并 `b9d2903`，无需发布）
 
 - 时间：开工 `2026-11-23 15:35`（会话创建时间）。★ 来由：15:29 真实 Chrome 上 ChatGPT 生成中拉丝带只导 PDF，写了一半的回答被导进去、不标黄（#35）：代码认的 `[data-testid="stop-button"]` 在现在的页面上不存在。
 - 改了哪些文件：`src/lib/adapter.ts`（`chatgptSite.streaming` 改成看回答外面 `[data-talvt-turn-state]` 是不是 `in_progress`；`cancelled` 用户停掉的照常导）；`tests/fixtures/chatgpt-thread.html`（每一轮问答外面套 `data-talvt-turn-state`，加 `setTurnState()`，生成中显示不带 data-testid 的「停止」键）；`tests/e2e.test.mjs`（「ChatGPT 长对话」组加两条：最后一轮生成中跳过并标黄、cancelled 照常导）；新建 `docs/recon/2026-11-23-ChatGPT生成中标记侦察记录.md`；`docs/LESSONS.md` L-29；本文件。
 - 测试：`npm run build && npm test` 原样结果 `ℹ tests 118` / `ℹ pass 118` / `ℹ fail 0`（`full.txt`，开始时 1 分钟负载 4.91）；`npm run compile` 无报错；`node scripts/check-rules.mjs` 通过。反向验证：新用例先在没改的 `src/`（即 `origin/main` `879e771`）上构建、只跑新的几条：生成中那条红，卡片「已导出 PDF，没进 Obsidian … 存 PDF 3 页」不标黄，和真实页面现象一致（`red-old-code.txt`）；cancelled 那条在旧代码下本来就绿（旧代码从不认生成中）。证据目录 `~/Library/Application Support/chatgpt-clipper/evidence/2026-11-23-issue-35/`。
 - 验证：侦察在常浩真实 Chrome 里新开标签页做（只读结构和 ChatGPT 自己加载的前端脚本，没发消息）：答完的一轮外面是 `data-talvt-turn-state="complete"`，前端脚本里这个属性取这一轮的 status，比较值只有 `in_progress`、`cancelled`、`complete`。`in_progress` 没在真实页面上亲眼看到（要发提问触发生成，先问常浩）。修复本身替身通过（无头 Chromium + 仿 ChatGPT 长对话测试页）；未在真实环境验证：合并、重新构建、刷新插件后在真实 ChatGPT 生成中拉一次（S9 生成中那次）。
-- 截图：无。
-- 发布与回读：未发布；主目录 `.output/chrome-mv3` 没动，合并后要 `npm run build` 再到扩展页刷新。
+- 真实 Chrome 代验（2026-11-23 15:48–15:55，PR #36 合并、主目录 15:47 重新构建、常浩刷新插件后，Claude in Chrome 真实拖拽）：① `clipper-diag`：内容脚本和后台都是 `2026-11-23T07:47:18.969Z`，各步通。② ChatGPT 生成中（常浩回「已刷新，你发」后，Claude 在测试对话「Chrome扩展开发流程」里发了一条长提问）：新一轮外面先是 `complete`（约 15 秒，思考阶段、还没有回答元素），然后变成 `in_progress`，回答出现、写到 366 字时在它的丝带上往下拉约 265px：8.3 秒导好，卡片「已导出 PDF，但可能不完整 … 读对话 4 条 ✓ 排版 2 轮 ✓ 存 PDF 8 页 …；第 2 轮还在生成，没导进去」，结果框黄底；PDF 第 1 轮完整，第 2 轮只有提问和「这条回答没读成：导出时还在生成，没导进去」，写了一半的正文不在里面。③ ChatGPT 长对话「梳理数字分身框架」（5 轮）整段收藏：在最后一条丝带上往下拉 150px，46.7 秒「已收藏整段 ✓ 快照 10 条 ✓ PNG 文件 5 张 ✓ MD 文件 5 问 5 答 ✓ 入库」，不报漏；Vault `00 待整理/ChatGPT收藏/2026-11-23 凡是我主动去追的…（整段）/` 里 `answer-01`～`05.png` 和笔记，5 个提问按顺序；滚动位置 82762 → 82762。第一次拖拽起点没落在丝带按钮上（长回答的丝带按钮只有顶上 44px，吸在视口上沿），变成了选中文字，没触发任何收藏，清掉选区后重拉。④ Claude 站「思考模型角色设置」（3 问 3 答）只导 PDF：6.7 秒，「读对话 6 条 ✓ 排版 3 轮 ✓ 存 PDF 9 页」，不标黄；PDF 里 3 轮小标题都在；Vault 没多东西。证据：`real-streaming.pdf`、`real-streaming.txt`、`real-streaming-card.png`、`real-claude.pdf`（同一证据目录）。
+- 截图：`~/Library/Application Support/chatgpt-clipper/evidence/2026-11-23-issue-35/real-streaming-card.png`（生成中那次的结果框）。
+- 发布与回读：无需发布（自用插件）；主目录 15:47 `npm run build`，常浩已在扩展页刷新，`clipper-diag` 回读是这次构建。
 - 与授权不一致之处、遗留问题、范围外发现：① 去掉了原来「只算最后一条回答」的限定：现在按回答自己所在那一轮的状态认，任何一条在生成都能认出（实际只会是最后一条）。② 思考阶段还没有回答元素，丝带挂不上，拉不了，没处理。③ 项目里的对话、临时对话、Work 模式有没有这一层没试。
 - 本轮新坑：L-29。
 
