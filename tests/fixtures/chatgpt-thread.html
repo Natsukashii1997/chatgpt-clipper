@@ -1,0 +1,69 @@
+<!doctype html>
+<!-- 仿 ChatGPT 网页版的长对话（整段读取 #32 用，内容是编的）。结构照 docs/recon/2026-11-23-ChatGPT长对话虚拟列表侦察记录.md：
+     每一轮包在 [data-virtualized-turn] 里（没有序号），问答各一条 data-chatgpt-search-unit-key；虚拟列表，只留视口上下 200px 内的轮，
+     远处的从页面上删掉，上下用占位撑出总高度；一次滚动超过 3 屏会被拉回原处（真实页面直接设到顶会被拉回）；打开时停在底部 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>长对话测试 - ChatGPT</title>
+<style>
+body{margin:0;background:#fff;color:#0d0d0d;font:16px/24px -apple-system,"PingFang SC",sans-serif}
+.scroller{height:100vh;overflow-y:auto;overflow-x:hidden}
+.list{max-width:740px;margin:0 auto;padding-left:24px}
+[data-virtualized-turn]{overflow-y:clip}
+.user-bubble{background:#f4f4f4;border-radius:18px;padding:10px 16px;margin:12px 0 12px auto;width:fit-content;max-width:80%}
+h2{font-size:18px;margin:8px 0}
+p{margin:0 0 12px}
+</style>
+</head>
+<body>
+<div class="scroller"><div class="list"><div class="pad top"></div><div class="pad bottom"></div></div></div>
+<script>
+const TURNS = 6, sc = document.querySelector('.scroller'), list = document.querySelector('.list');
+const padTop = list.querySelector('.top'), padBottom = list.querySelector('.bottom');
+const turns = [];
+let y = 0;
+for (let k = 1; k <= TURNS; k++) {
+  const paras = 6 + (k % 3) * 4, h = 140 + paras * 72;
+  turns.push({ top: y, h, html: `<div data-chatgpt-search-unit-key="vt-${k}:0:user"><div class="user-bubble">第 ${k} 问：请讲讲第 ${k} 个主题的要点</div></div>`
+    + `<div data-chatgpt-search-unit-key="vt-${k}:2:assistant"><h2>第 ${k} 条回答</h2>`
+    + Array.from({ length: paras }, (_, i) => `<p>第 ${k} 条回答的第 ${i + 1} 段：这是一段编出来的文字，用来撑出回答的高度，看整段读取能不能逐轮读到。</p>`).join('') + '</div>' });
+  y += h + 12;
+}
+const total = y;
+const shown = new Map();   // 轮号 → 页面上的节点（留着的不重建，插件挂的丝带还在）
+function render() {
+  const lo = sc.scrollTop - 200, hi = sc.scrollTop + sc.clientHeight + 200;
+  const keep = turns.map((t, i) => i).filter(i => turns[i].top < hi && turns[i].top + turns[i].h > lo);
+  for (const [i, el] of shown) if (!keep.includes(i)) { el.remove(); shown.delete(i); }
+  let after = padTop;
+  for (const i of keep) {
+    let el = shown.get(i);
+    if (!el) {
+      el = document.createElement('div');
+      el.setAttribute('data-virtualized-turn', '');
+      el.style.cssText = `contain:size;height:${turns[i].h}px;margin-top:12px`;
+      el.innerHTML = turns[i].html;
+      shown.set(i, el);
+    }
+    after.after(el);
+    after = el;
+  }
+  const first = turns[keep[0]], last = turns[keep.at(-1)];
+  padTop.style.height = `${first ? first.top : 0}px`;
+  padBottom.style.height = `${last ? total - last.top - last.h - 12 : total}px`;
+}
+let t = 0, at = 0;
+sc.addEventListener('scroll', () => {
+  if (Math.abs(sc.scrollTop - at) > sc.clientHeight * 3) { sc.scrollTop = at; return; }
+  at = sc.scrollTop;
+  clearTimeout(t);
+  t = setTimeout(render, 100);
+});
+render();
+sc.scrollTop = sc.scrollHeight;
+at = sc.scrollTop;
+render();
+</script>
+</body>
+</html>

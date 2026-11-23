@@ -4,12 +4,14 @@
 
 更新：2026-11-23。#28 在 `claude/28-pull-pdf` 上做完，全量测试结果见下一节；下一步：常浩回「合并」→ 合并、主目录重新构建 → 刷新插件 → 真实 Chrome 走冒烟清单 S9（ChatGPT、Claude 各一次，再在生成中拉一次）。
 
-### 主线：只导出 PDF｜完成 3/4
+### 主线：只导出 PDF｜完成 4/6
 
 - ✅ 判断能不能做、出入口三版（常浩选 B）→ 嫌按 ⌥ 费劲，再出丝带三版（常浩选二版「拉得更长」）
 - ✅ 实现、测试，PR #29 已合并（`81b2aea`）
-- ✅ 真实 Chrome 验 S9（ChatGPT）：导出对了，但发现报「漏了 N 条」（#30，本节修）
-- ⏳ #30 合并后再在真实 Chrome 走一遍 S9（ChatGPT、Claude、生成中各一次）；常浩验收后 DECIDED 那行补提交号
+- ✅ 修 ChatGPT 隐藏副本报「漏了」，PR #31 已合并（`e49ce14`）
+- ✅ 真实 Chrome：Claude 站通过（6 问 6 答、8 页）；ChatGPT 丝带横纹和手势正常
+- ▶ ChatGPT 长对话导出范围不对（#32，本节修，PR 待合并）
+- ⏳ #32 合并后真实 Chrome 再验 ChatGPT 长对话；「还在生成时跳过」要常浩发一条提问再验；常浩验收后 DECIDED 那行补提交号
 
 ### 主线：评估后分批优化｜完成 6/7（已收尾，D ⏸）
 
@@ -22,6 +24,17 @@
 - ✅ 清理旧 worktree（常浩 2026-11-21 经飞书回「全部给推荐」）：删了 claude-8-image-answer、claude-e-smoke、codex-audit-fix-1112、Sandbox 下的 hooks05 四个本机目录和本地分支，远端没动；`chatgpt-clipper-l07` 是别的会话的，没动
 
 
+
+## ChatGPT 长对话整段读取按每条消息的标识走（2026-11-23，Claude，常浩回「接着修 #32」；已提交、PR 待合并、未发布）
+
+- 时间：开工 `2026-11-23 13:36`。★ 来由：#31 合并后真实 Chrome 复验，ChatGPT 5 轮对话只导出了 1 轮（而且是更早的一轮），不报错；侦察发现 ChatGPT 长对话也是虚拟列表、行没有序号、直接滚到顶会被拉回（L-28）。整段收藏同样受影响。
+- 改了哪些文件：`src/lib/thread.ts`（按每条的标识记读过没有、认下一条和「读到哪条为止」；回到顶部和滚回原位改成先直接设、被拉回就分步走，每步最多两屏，到顶停稳 3 次）；`src/lib/adapter.ts`（`ThreadItem` 加 `key`，站点加 `stableOrder`、`itemKey()`，导出 `STABLE_ORDER`）；`src/entrypoints/content.ts`（只导 PDF 的「到这一条为止」和「还在生成」按标识比）；新测试页 `tests/fixtures/chatgpt-thread.html`（6 轮虚拟列表、行没有序号、一次滚超过 3 屏被拉回、打开停在底部）；`tests/e2e.test.mjs`（三条：最后一条只导 PDF 读全 6 轮并滚回原位、第 3 条只到第 3 轮、整段收藏 6 问 6 答）；`docs/recon/2026-11-23-ChatGPT长对话虚拟列表侦察记录.md`；`docs/PRD.md` FR-13 一句；`docs/LESSONS.md` L-28；本文件。
+- 测试：`npm run build && npm test` 原样结果 `ℹ tests 116` / `ℹ pass 116` / `ℹ fail 0`（`full.txt`，开始时 1 分钟负载 51.22）；`npm run compile` 无报错；`node scripts/check-rules.mjs` 通过。反向验证：`src/` 换回 `origin/main` 跑新三条全红（只导 PDF「读对话 4 条 ✓ 排版 2 轮」从第 4 问开始、整段「2 问 2 答」，`red-old-code.txt`），换回、测、还原在一条命令里，还原后和新版逐字比对一致。证据目录 `~/Library/Application Support/chatgpt-clipper/evidence/2026-11-23-issue-32/`。
+- 验证：替身通过（无头 Chromium + 仿 ChatGPT 虚拟列表的测试页）。侦察在常浩的真实 Chrome 里做（只读、只滚动）。未在真实环境验证：修复本身要合并、重新构建、刷新插件后在「梳理数字分身框架」上再拉一次；几十轮以上的对话、网速慢时往上加载的情况没试。
+- 截图：无。
+- 发布与回读：未发布。
+- 与授权不一致之处、遗留问题、范围外发现：① 回到顶部、滚回原位比原来慢：每次到位后要停稳约 1.2 秒，长对话往上分步滚每两屏 0.4 秒。② Claude 站的读取逻辑不变（仍按固定行号），只是回顶、回原位也走同一个分步函数。③ 滚回原位在 ChatGPT 上是尽量回到原处，页面高度变了时可能差一点。
+- 本轮新坑：L-28。
 
 ## 整段读取不算 ChatGPT 隐藏页面层里的副本（2026-11-23，Claude，#28 合并后真实 Chrome 代验发现、按全局规则「修看到的相关问题」直接修；已提交、PR 待合并、未发布）
 
