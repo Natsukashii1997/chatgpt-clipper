@@ -28,6 +28,7 @@ const CLAUDE_CODE_URL = 'https://claude.ai/code/session_fixture';
 const IMAGE_ANSWER_URL = 'https://chatgpt.com/c/image', IMAGE_ANSWER_FIXTURE = fs.readFileSync(path.join(ROOT, 'tests/fixtures/image-answer.html'), 'utf8');
 // 多轮对话，虚拟列表（整段收藏用）
 const THREAD_FIXTURE = fs.readFileSync(path.join(ROOT, 'tests/fixtures/claude-thread.html'), 'utf8'), THREAD_URL = 'https://claude.ai/chat/thread';
+const GPT_THREAD_FIXTURE = fs.readFileSync(path.join(ROOT, 'tests/fixtures/chatgpt-thread.html'), 'utf8'), GPT_THREAD_URL = 'https://chatgpt.com/c/thread-virtual';
 // 第十节的外部资源：字体与页面同源；图片跨域且不带 CORS 头，和真实页面的 images.openai.com 一样内容脚本读不到
 const FONT_URL = 'https://chatgpt.com/cdn/assets/TestFont.ttf', FONT = fs.readFileSync('/System/Library/Fonts/Supplemental/Zapfino.ttf');
 const IMAGE_URL = 'https://images.openai.com/fixture/bridge.svg';
@@ -60,6 +61,7 @@ before(async () => {
     if (url.startsWith(URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: FIXTURE });
     if (url.startsWith(CLAUDE_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: CLAUDE_FIXTURE });
     if (url.startsWith(THREAD_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: THREAD_FIXTURE });
+    if (url.startsWith(GPT_THREAD_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: GPT_THREAD_FIXTURE });
     if (url.startsWith(CLAUDE_CODE_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: CLAUDE_FIXTURE });
     if (url.startsWith(IMAGE_ANSWER_URL)) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: IMAGE_ANSWER_FIXTURE });
     // 模拟 Claude 改版：回答换了标记，插件认不出
@@ -1428,6 +1430,76 @@ describe('导出 PDF', () => {
       assert.ok(r.text.includes('6. 第 6 问'), '还在生成的这一轮提问照样放');
       assert.ok(r.text.includes('导出时还在生成，没导进去'), 'PDF 里写明');
       assert.ok(!r.text.includes('第 6 条回答的第 1 段'), '还在生成的回答不该导进去');
+    });
+  });
+
+  // ChatGPT 长对话是虚拟列表、行没有序号，直接滚到顶会被拉回（#32）
+  describe('ChatGPT 长对话（虚拟列表，#32）', () => {
+    let gp;
+    const MSG6 = '[data-chatgpt-search-unit-key="vt-6:2:assistant"]';
+    const mark = () => gp.locator('clipper-dock .card').evaluateAll(cs => cs.forEach(c => c.setAttribute('data-old', '')));
+    const finished = async () => {
+      const card = gp.locator('clipper-dock .card:not([data-old])').filter({ has: gp.locator('.loc') }).first();
+      await card.waitFor({ timeout: 90_000 });
+      return (await card.innerText()).replace(/\s+/g, ' ');
+    };
+    const pdfFrom = async rib => {
+      await mark();
+      const before = await sw.evaluate(() => self.__pdfNames.length);
+      await pull(gp, rib, 250);
+      return { card: await finished(), ...(await lastPdf(before)) };
+    };
+    const scrollTop = () => gp.locator('.scroller').evaluate(e => Math.round(e.scrollTop));
+    before(async () => {
+      gp = await ctx.newPage();
+      await gp.goto(GPT_THREAD_URL);
+      await gp.locator(`${MSG6} clipper-ribbon`).waitFor({ state: 'attached' });
+    });
+    after(() => gp.close());
+
+    test('在最后一条上拉过 200px 只导 PDF：从第 1 轮读到第 6 轮（不只是页面上现有的几轮），读完滚回原位', async () => {
+      const start = await scrollTop();
+      const r = await pdfFrom(gp.locator(`${MSG6} clipper-ribbon button`));
+      assert.match(r.card, /读对话 12 条 ✓ 排版 6 轮/, r.card);
+      assert.ok(!r.card.includes('漏了'), r.card);
+      for (let k = 1; k <= 6; k++) {
+        assert.ok(r.text.includes(`${k}. 第 ${k} 问`), `该有第 ${k} 轮的小标题`);
+        assert.ok(r.text.includes(`第 ${k} 条回答的第 1 段`), `该有第 ${k} 条回答`);
+      }
+      assert.ok(Math.abs((await scrollTop()) - start) < 3, '读完该滚回原位');
+    });
+
+    test('在第 3 条回答上拉：只到第 3 轮为止', async () => {
+      // 一次滚太远会被拉回：分步滚到第 3 轮
+      await gp.evaluate(async () => {
+        const sc = document.querySelector('.scroller'), y = turns[2].top + 40;
+        for (let i = 0; i < 50 && Math.abs(sc.scrollTop - y) > 2; i++) {
+          sc.scrollTop += Math.sign(y - sc.scrollTop) * Math.min(Math.abs(y - sc.scrollTop), sc.clientHeight * 2);
+          await new Promise(r => setTimeout(r, 150));
+        }
+      });
+      const rib = gp.locator('[data-chatgpt-search-unit-key="vt-3:2:assistant"] clipper-ribbon button');
+      await rib.waitFor({ state: 'attached' });
+      const r = await pdfFrom(rib);
+      assert.match(r.card, /读对话 6 条 ✓ 排版 3 轮/, r.card);
+      assert.ok(r.text.includes('第 3 条回答的第 1 段'));
+      assert.ok(!r.text.includes('第 4 问'), '不该有第 4 问');
+    });
+
+    test('整段收藏同样从第 1 轮收到第 6 轮', async () => {
+      await gp.evaluate(async () => {
+        const sc = document.querySelector('.scroller');
+        for (let i = 0; i < 50 && sc.scrollTop + sc.clientHeight < sc.scrollHeight - 2; i++) {
+          sc.scrollTop += sc.clientHeight * 2;
+          await new Promise(r => setTimeout(r, 150));
+        }
+      });
+      await gp.locator(`${MSG6} clipper-ribbon`).waitFor({ state: 'attached' });
+      await mark();
+      await pull(gp, gp.locator(`${MSG6} clipper-ribbon button`), 150);
+      const card = await finished();
+      assert.ok(card.includes('6 问 6 答'), card);
+      assert.ok(!card.includes('漏了'), card);
     });
   });
 

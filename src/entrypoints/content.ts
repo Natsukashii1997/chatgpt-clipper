@@ -381,8 +381,8 @@ async function exportUntil(el: HTMLElement) {
   const run = () => { card.close(); void exportUntil(el); };
   let title = '';
   try {
-    const until = threadItems().find(i => i.el === el)?.order;
-    if (until === undefined) throw new Error('页面上没找到这条回答，滚动一下再拉');
+    const until = threadItems().find(i => i.el === el);
+    if (!until) throw new Error('页面上没找到这条回答，滚动一下再拉');
     const streaming = answerStreaming(el);
     card.step(0, 'on');
     const { count, missed } = await readThread(async (it, k) => {
@@ -397,7 +397,7 @@ async function exportUntil(el: HTMLElement) {
       }
       if (!rounds.length) rounds.push({ question: '', answers: [] });
       const answers = rounds.at(-1)!.answers;
-      if (it.order === until && streaming) {
+      if (it.key === until.key && streaming) {
         answers.push({ error: '导出时还在生成，没导进去' });
         warns.push(`第 ${rounds.length} 轮还在生成，没导进去`);
         return;

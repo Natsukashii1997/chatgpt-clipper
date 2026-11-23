@@ -67,8 +67,12 @@ interface Site {
   chatOnly: boolean;
   /** 块的选择器：节选（FR-12）按块收，取最外层的那个 */
   block: string;
-  /** 整段收藏（FR-13）：一条消息在整段对话里的顺序号；i 是它在页面上现有消息里的序号 */
+  /** 整段收藏（FR-13）：一条消息的顺序号；i 是它在页面上现有消息里的序号 */
   order(el: HTMLElement, i: number): number;
+  /** 顺序号在整段对话里固定不变（Claude 的行号）；不固定的（ChatGPT 只能按页面上现有的先后排）只在同一次查询里能比先后 */
+  stableOrder: boolean;
+  /** 一条消息自己的标识，滚动、重绘后不变：整段读取靠它认「读过没有」「读到哪一条为止」（#32） */
+  itemKey(el: HTMLElement, i: number): string;
   /** 这条回答是不是还在生成（只导 PDF 时跳过它，#28） */
   streaming(el: HTMLElement): boolean;
   /** 转 Markdown 用到的页面标记 */
@@ -91,8 +95,11 @@ const chatgptSite: Site = {
   chatOnly: false,
   // DIL 渲染，外面还套着 section：段落、标题、列表、表格、代码块、文档块、卡片网格、带框卡片、公式
   block: 'p, h1, h2, h3, h4, h5, h6, ul, ol, table, pre, blockquote, hr, img, figure, .katex-display, [data-client-defined-widget], [data-d-component="grid"], [data-d-has-border], [data-learning-block]',
-  // 全部轮次都在页面里，用页面顺序
+  // 每一轮没有序号，只能按页面上现有的先后排。长对话是虚拟列表：只留视口附近的一两轮，远处的从页面上删掉，
+  // 直接把滚动位置设到很远会被页面拉回（docs/recon/2026-11-23-ChatGPT长对话虚拟列表侦察记录.md，#32）
   order: (_el, i) => i,
+  stableOrder: false,
+  itemKey: (el, i) => el.dataset.chatgptSearchUnitKey ?? el.dataset.chatgptSearchMessageIds ?? `#${i}`,
   // 生成中输入框的发送键换成停止键；只算最后一条回答（未在真实页面侦察，#28 合并后在真实 Chrome 里验）
   streaming: el => !!document.querySelector('[data-testid="stop-button"]') && findAnswers().at(-1) === el,
   marks: CHATGPT_MARKS,
@@ -115,6 +122,8 @@ const claudeSite: Site = {
   block: '[data-cds="Prose"] .standard-markdown > *, [data-cds="Card"][data-file-row-card]',
   // 对话行的 data-index：虚拟列表，只渲染屏幕附近的行，远处的会卸掉（docs/recon/2026-11-04-整段收藏侦察记录.md）
   order: (el, i) => Number(el.closest<HTMLElement>('[data-testid="transcript-row"][data-index]')?.dataset.index ?? i),
+  stableOrder: true,
+  itemKey: (el, i) => String(claudeSite.order(el, i)),
   // 生成中的回答带 data-is-streaming="true"（docs/recon/2026-11-03-Claude侦察记录.md）
   streaming: el => el.closest('[data-is-streaming]')?.getAttribute('data-is-streaming') === 'true',
   // 回答基本是标准 HTML：代码块是普通 pre > code.language-*，公式同样是 KaTeX；没有 DIL 组件、文档块、来源胶囊、代码编辑器
@@ -244,11 +253,13 @@ export function userText(u: HTMLElement): string {
   return (copy.textContent ?? '').trim();
 }
 
-/** 整段收藏（FR-13）：页面上现有的每一问每一答。order 是在整段对话里的顺序号（各站怎么取见 site.order） */
-export interface ThreadItem { role: 'user' | 'assistant'; el: HTMLElement; order: number }
+/** 整段收藏（FR-13）：页面上现有的每一问每一答。order 是顺序号，key 是这一条自己的标识（各站怎么取见 site.order、site.itemKey） */
+export interface ThreadItem { role: 'user' | 'assistant'; el: HTMLElement; order: number; key: string }
+/** 顺序号在整段对话里固定不变（见 site.stableOrder） */
+export const STABLE_ORDER = site.stableOrder;
 export function threadItems(): ThreadItem[] {
   // 只认看得见的：ChatGPT 新版应用框架在页面里留着一块隐藏的页面层（祖先 display:none），里面有同一对话每一问每一答的副本（#30）
   return [...document.querySelectorAll<HTMLElement>(`${site.question}, ${ANSWER_SELECTOR}`)].filter(el => el.checkVisibility()).map((el, i) => ({
-    role: el.matches(ANSWER_SELECTOR) ? 'assistant' : 'user', el, order: site.order(el, i),
+    role: el.matches(ANSWER_SELECTOR) ? 'assistant' : 'user', el, order: site.order(el, i), key: site.itemKey(el, i),
   }));
 }
