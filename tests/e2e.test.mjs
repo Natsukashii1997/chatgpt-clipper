@@ -1504,6 +1504,33 @@ describe('导出 PDF', () => {
       assert.ok(card.includes('6 问 6 答'), card);
       assert.ok(!card.includes('漏了'), card);
     });
+
+    // 真实页面：生成中这一轮外面是 data-talvt-turn-state="in_progress"，停止键没有 data-testid（#35）
+    test('最后一轮还在生成：只导 PDF 跳过它的回答、提问照样放，卡片标黄写「第 6 轮还在生成，没导进去」', async () => {
+      await gp.evaluate(() => setTurnState(6, 'in_progress'));
+      try {
+        const r = await pdfFrom(gp.locator(`${MSG6} clipper-ribbon button`));
+        assert.match(r.card, /^已导出 PDF，但可能不完整/, r.card);
+        assert.ok(r.card.includes('第 6 轮还在生成，没导进去'), r.card);
+        assert.ok(r.text.includes('6. 第 6 问'), '还在生成的这一轮提问照样放');
+        assert.ok(r.text.includes('导出时还在生成，没导进去'), 'PDF 里写明');
+        assert.ok(!r.text.includes('第 6 条回答的第 1 段'), '还在生成的回答不该导进去');
+        assert.ok(r.text.includes('第 5 条回答的第 1 段'), '前面答完的照样导');
+      } finally {
+        await gp.evaluate(() => setTurnState(6, 'complete'));
+      }
+    });
+
+    test('用户停掉的那一轮（cancelled）不算还在生成：照常导进去', async () => {
+      await gp.evaluate(() => setTurnState(6, 'cancelled'));
+      try {
+        const r = await pdfFrom(gp.locator(`${MSG6} clipper-ribbon button`));
+        assert.ok(!r.card.includes('还在生成'), r.card);
+        assert.ok(r.text.includes('第 6 条回答的第 1 段'), '停掉的回答照样导');
+      } finally {
+        await gp.evaluate(() => setTurnState(6, 'complete'));
+      }
+    });
   });
 
   test('ChatGPT 页面里藏着一份对话副本（新版应用框架的隐藏页面层，#30）：只导 PDF 不把副本算进去，不报「漏了」', async () => {
