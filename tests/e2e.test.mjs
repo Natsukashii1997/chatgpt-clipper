@@ -1470,11 +1470,13 @@ describe('导出 PDF', () => {
     });
 
     test('在第 3 条回答上拉：只到第 3 轮为止', async () => {
-      // 一次滚太远会被拉回：分步滚到第 3 轮
+      // 一次滚太远会被拉回、不发滚轮事件会被拉回底部：分步滚到第 3 轮
       await gp.evaluate(async () => {
         const sc = document.querySelector('.scroller'), y = turns[2].top + 40;
         for (let i = 0; i < 50 && Math.abs(sc.scrollTop - y) > 2; i++) {
-          sc.scrollTop += Math.sign(y - sc.scrollTop) * Math.min(Math.abs(y - sc.scrollTop), sc.clientHeight * 2);
+          const d = Math.sign(y - sc.scrollTop) * Math.min(Math.abs(y - sc.scrollTop), sc.clientHeight * 2);
+          sc.dispatchEvent(new WheelEvent('wheel', { deltaY: d, bubbles: true }));
+          sc.scrollTop += d;
           await new Promise(r => setTimeout(r, 150));
         }
       });
@@ -1490,6 +1492,7 @@ describe('导出 PDF', () => {
       await gp.evaluate(async () => {
         const sc = document.querySelector('.scroller');
         for (let i = 0; i < 50 && sc.scrollTop + sc.clientHeight < sc.scrollHeight - 2; i++) {
+          sc.dispatchEvent(new WheelEvent('wheel', { deltaY: sc.clientHeight * 2, bubbles: true }));
           sc.scrollTop += sc.clientHeight * 2;
           await new Promise(r => setTimeout(r, 150));
         }

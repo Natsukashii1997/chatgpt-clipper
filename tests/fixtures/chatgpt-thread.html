@@ -1,7 +1,8 @@
 <!doctype html>
 <!-- 仿 ChatGPT 网页版的长对话（整段读取 #32 用，内容是编的）。结构照 docs/recon/2026-11-23-ChatGPT长对话虚拟列表侦察记录.md：
      每一轮包在 [data-virtualized-turn] 里（没有序号），问答各一条 data-chatgpt-search-unit-key；虚拟列表，只留视口上下 200px 内的轮，
-     远处的从页面上删掉，上下用占位撑出总高度；一次滚动超过 3 屏会被拉回原处（真实页面直接设到顶会被拉回）；打开时停在底部 -->
+     远处的从页面上删掉，上下用占位撑出总高度；一次滚动超过 3 屏会被拉回原处（真实页面直接设到顶会被拉回）；打开时停在底部。
+     「贴住最新消息」：没收到过滚轮事件时，一渲染出更早的轮就拉回底部；收到滚轮事件后不再拉，回到底部又重新贴住（真实页面实测，#32） -->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -32,7 +33,9 @@ for (let k = 1; k <= TURNS; k++) {
 }
 const total = y;
 const shown = new Map();   // 轮号 → 页面上的节点（留着的不重建，插件挂的丝带还在）
+let pinned = true;
 function render() {
+  const before = Math.min(...shown.keys());
   const lo = sc.scrollTop - 200, hi = sc.scrollTop + sc.clientHeight + 200;
   const keep = turns.map((t, i) => i).filter(i => turns[i].top < hi && turns[i].top + turns[i].h > lo);
   for (const [i, el] of shown) if (!keep.includes(i)) { el.remove(); shown.delete(i); }
@@ -52,11 +55,14 @@ function render() {
   const first = turns[keep[0]], last = turns[keep.at(-1)];
   padTop.style.height = `${first ? first.top : 0}px`;
   padBottom.style.height = `${last ? total - last.top - last.h - 12 : total}px`;
+  if (pinned && keep.length && keep[0] < before) { sc.scrollTop = sc.scrollHeight; at = sc.scrollTop; render(); }
 }
+sc.addEventListener('wheel', () => { pinned = false; });
 let t = 0, at = 0;
 sc.addEventListener('scroll', () => {
   if (Math.abs(sc.scrollTop - at) > sc.clientHeight * 3) { sc.scrollTop = at; return; }
   at = sc.scrollTop;
+  if (sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 2) pinned = true;
   clearTimeout(t);
   t = setTimeout(render, 100);
 });

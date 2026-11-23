@@ -1,13 +1,15 @@
 // 整段收藏（FR-13，2026-11-04 用户选定「拉长书签」）和只导 PDF（FR-16）：从对话开头往下，逐条读每一问每一答，读完滚回原位。
 // Claude 和 ChatGPT 长对话都是虚拟列表，远处的行会被删掉：每滚一步就把刚出现的行读掉，不能先滚一遍再统一读
 // （docs/recon/2026-11-04-整段收藏侦察记录.md、docs/recon/2026-11-23-ChatGPT长对话虚拟列表侦察记录.md）。
-// ChatGPT 的行没有序号，只能按页面上现有的先后排：用每一条自己的标识（key）记「读过没有」，下一条是页面上紧跟在刚读那条后面的（#32）
+// ChatGPT 的行没有序号，只能按页面上现有的先后排：用每一条自己的标识（key）记「读过没有」，下一条是页面上紧跟在刚读那条后面的（#32）。
+// ChatGPT 平时「贴住最新消息」：程序改滚动位置不算用户在滚，一加载出更早的轮就把位置拉回底部；每次滚动前先发一个滚轮事件，
+// 它才当成用户在往回看（2026-11-23 真实页面实测：不发只能退一轮，发了 17 秒滚到最早一轮）
 import { STABLE_ORDER, threadItems, type ThreadItem } from './adapter';
 import { scrollParent } from './dom';
 
 // 没有下一条时每步滚半屏（相邻两步渲染的行有重叠，不漏行）；滚完等行渲染出来（实测 150ms 内）；一条找不到时最多再等几次
 const STEP = 0.5, STEP_WAIT = 400, TRIES = 3;
-// 回到顶部、滚回原位时分步走：ChatGPT 直接把滚动位置设到很远会被页面拉回，一次最多走两屏；到顶后停稳几次才算到顶（顶上可能还在加载更早的轮）
+// 回到顶部、滚回原位时分步走：一次最多走两屏；到顶后停稳几次才算到顶（顶上可能还在加载更早的轮）
 const JUMP = 2, SETTLE = 3, MAX_STEPS = 400;
 
 /** 按顺序把每一条交给 read（k 从 1 起）。until：读完这一条就停（只导 PDF 时「从开头到这一条」，#28）。
@@ -29,7 +31,8 @@ export async function readThread(read: (it: ThreadItem, k: number) => Promise<vo
     if (p < 0) for (let i = items.length - 1; i >= 0 && p < 0; i--) if (seen.has(items[i]!.key)) p = i;
     return p < 0 ? undefined : items.slice(p + 1).find(i => !seen.has(i.key));
   };
-  const done = (it: ThreadItem) => { seen.add(it.key); lastKey = it.key; lastOrder = it.order; };
+  let lastEl: HTMLElement | undefined;
+  const done = (it: ThreadItem) => { seen.add(it.key); lastKey = it.key; lastOrder = it.order; lastEl = it.el; };
   try {
     await scrollTo(sc, 0);
     for (;;) {
@@ -37,7 +40,7 @@ export async function readThread(read: (it: ThreadItem, k: number) => Promise<vo
       if (n && until && STABLE_ORDER && n.order > until.order) break;
       if (n) {
         // 先滚到这一条开头、等它渲染好，再按标识重新找一次：页面可能重绘过，先前拿到的节点已不在页面上（量出来 0×0）
-        sc.scrollTop += n.el.getBoundingClientRect().top - top();
+        move(sc, n.el.getBoundingClientRect().top - top());
         await wait(STEP_WAIT);
         const it = threadItems().find(i => i.key === n.key && i.el.isConnected && i.el.getBoundingClientRect().height > 0);
         if (!it) {
@@ -54,7 +57,9 @@ export async function readThread(read: (it: ThreadItem, k: number) => Promise<vo
       // 到底后再等一轮，最后几行可能还没渲染
       if (sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 2) { if (++bottom >= 2) break; }
       else bottom = 0;
-      sc.scrollTop += sc.clientHeight * STEP;
+      // 刚读的那条还很长（ChatGPT 一条回答常有两万像素）：直接跳到它末尾附近，不用半屏半屏地走过去
+      const rest = lastEl?.isConnected ? lastEl.getBoundingClientRect().bottom - top() - sc.clientHeight * STEP : 0;
+      move(sc, Math.max(sc.clientHeight * STEP, rest));
       await wait(STEP_WAIT);
     }
   } finally {
@@ -63,15 +68,21 @@ export async function readThread(read: (it: ThreadItem, k: number) => Promise<vo
   return { count, missed };
 }
 
+/** 滚动 d 像素：先发一个同方向的滚轮事件，页面才当成用户在滚（ChatGPT 不然会拉回底部） */
+function move(sc: HTMLElement, d: number) {
+  sc.dispatchEvent(new WheelEvent('wheel', { deltaY: d, bubbles: true, cancelable: true }));
+  sc.scrollTop += d;
+}
+
 /** 滚到 y：先直接设，被页面拉回或没到就分步走，每步最多 JUMP 屏；走不动了就停。到 y 后停稳 SETTLE 次才算到 */
 async function scrollTo(sc: HTMLElement, y: number) {
-  sc.scrollTop = y;
+  move(sc, y - sc.scrollTop);
   await wait(STEP_WAIT);
   for (let i = 0, still = 0; i < MAX_STEPS && still < SETTLE; i++) {
     const at = sc.scrollTop, d = y - at;
     if (Math.abs(d) < 2) { still++; await wait(STEP_WAIT); continue; }
     still = 0;
-    sc.scrollTop = at + Math.sign(d) * Math.min(Math.abs(d), sc.clientHeight * JUMP);
+    move(sc, Math.sign(d) * Math.min(Math.abs(d), sc.clientHeight * JUMP));
     await wait(STEP_WAIT);
     if (Math.abs(sc.scrollTop - at) < 2) return;
   }
