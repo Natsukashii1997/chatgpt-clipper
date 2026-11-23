@@ -4,12 +4,12 @@
 
 更新：2026-11-23。#28 在 `claude/28-pull-pdf` 上做完，全量测试结果见下一节；下一步：常浩回「合并」→ 合并、主目录重新构建 → 刷新插件 → 真实 Chrome 走冒烟清单 S9（ChatGPT、Claude 各一次，再在生成中拉一次）。
 
-### 主线：只导出 PDF｜完成 2/4
+### 主线：只导出 PDF｜完成 3/4
 
 - ✅ 判断能不能做、出入口三版（常浩选 B）→ 嫌按 ⌥ 费劲，再出丝带三版（常浩选二版「拉得更长」）
-- ✅ 实现、测试（本 PR）
-- ⏳ 合并后在真实 Chrome 里验 S9；ChatGPT「正在生成」的停止键标记 `[data-testid="stop-button"]` 是没侦察过的，要一起验
-- ⏳ 常浩验收后，DECIDED 那行补提交号和「常浩验收」
+- ✅ 实现、测试，PR #29 已合并（`81b2aea`）
+- ✅ 真实 Chrome 验 S9（ChatGPT）：导出对了，但发现报「漏了 N 条」（#30，本节修）
+- ⏳ #30 合并后再在真实 Chrome 走一遍 S9（ChatGPT、Claude、生成中各一次）；常浩验收后 DECIDED 那行补提交号
 
 ### 主线：评估后分批优化｜完成 6/7（已收尾，D ⏸）
 
@@ -22,6 +22,17 @@
 - ✅ 清理旧 worktree（常浩 2026-11-21 经飞书回「全部给推荐」）：删了 claude-8-image-answer、claude-e-smoke、codex-audit-fix-1112、Sandbox 下的 hooks05 四个本机目录和本地分支，远端没动；`chatgpt-clipper-l07` 是别的会话的，没动
 
 
+
+## 整段读取不算 ChatGPT 隐藏页面层里的副本（2026-11-23，Claude，#28 合并后真实 Chrome 代验发现、按全局规则「修看到的相关问题」直接修；已提交、PR 待合并、未发布）
+
+- 时间：开工 `2026-11-23 13:12`。★ 来由：#28 合并后在真实 Chrome 走 S9，ChatGPT 上 1 问 1 答的对话报「读对话 2 条，漏了 2 条」，查到页面里有一块隐藏的页面层放着副本（L-27）。整段收藏同样受影响。
+- 改了哪些文件：`src/lib/adapter.ts`（`threadItems()` 只认 `checkVisibility()` 为真的条目）；`tests/e2e.test.mjs`（新用例「ChatGPT 页面里藏着一份对话副本…」）；`docs/LESSONS.md`（L-27）；本文件。
+- 测试：`npm run build && npm test` 原样结果 `ℹ tests 113` / `ℹ pass 113` / `ℹ fail 0`（`full.txt`，开始时 1 分钟负载 53.60）；`npm run compile` 无报错；`node scripts/check-rules.mjs` 通过。反向验证：去掉过滤跑新用例报红「读对话 2 条…漏了 4 条」（`red-old-code.txt`），和真实页面现象一致；改、测、还原在一条命令里。证据目录 `~/Library/Application Support/chatgpt-clipper/evidence/2026-11-23-issue-30/`。
+- 验证：替身通过（无头 Chromium + ChatGPT 测试页里加一份 display:none 副本）。真实 Chrome（#28 合并、主目录 13:06 重新构建、常浩刷新插件后）：① S0 页面 `clipper-diag`：内容脚本和后台都是 `2026-11-23T05:05:59.820Z`，各步通。② ChatGPT「门卫机器人审查」对话（1 问 1 答，回答约 9500px 高），Claude in Chrome 真实拖拽最后一条丝带往下约 260px 松手：三步卡，13.6 秒导好，`~/Downloads/2026-11-23 数字分身｜0E-3a 门卫机器人（风险级 L3，最后一轮）（截至 13-11）.pdf`，A4 11 页，pdftotext 看到标题、来源、原链接、提问和回答；卡片标黄「漏了 2 条」就是本节修的问题。③ ChatGPT「梳理数字分身框架」（3 轮、约 6 万像素）：每轮都留在页面上，没被卸载；外面有 `data-virtualized-turn`，更长的对话会不会卸载没试。没在真实 Chrome 验的：修复本身（要合并后）、Claude 站、生成中跳过、拉到 200px 时丝带横纹的样子。
+- 截图：无。
+- 发布与回读：未发布。
+- 与授权不一致之处、遗留问题、范围外发现：① 常浩没点名这个修复；它让「整段读取」回到原定行为，按全局规则第 3 节直接修，交付时列出。② `findAnswers()` 也会给隐藏副本挂丝带（看不见，无害），没改。③ ChatGPT 长对话可能也开始虚拟列表（`data-virtualized-turn`），若真卸载远处的轮，`order: (_el, i) => i` 会出错，要另做侦察。
+- 本轮新坑：L-27。
 
 ## 只导出 PDF：丝带拉过 200px 松手只导 PDF（2026-11-23，Claude，常浩先后选入口 B 版、丝带二版「拉得更长」，说选定即视为对丝带改动的确认；已提交、PR 待合并、未发布）
 
