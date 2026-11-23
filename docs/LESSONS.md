@@ -255,3 +255,11 @@
   - 用户手上的解法：设置页重新选一次文件夹；不行就移除后重装（会清掉「已收藏」记录和设置，Vault 里的文件不受影响）。
 - 证据：`tests/snapshot.test.mjs`「存着的文件夹读不出、读它的事务一直不结束…」（旧代码下报红：`'写被堵住' !== '写进了'`）、「取 Vault 文件夹、查授权一直不回…」（加了「只有查授权不回照常入库」）、「自检…」；`~/Library/Application Support/chatgpt-clipper/evidence/2026-11-20-vault-hang-2/`（`red-old-code.txt`、`full-*.txt`、两份 Chrome 采样）。
 - 升级：〔提醒〕未升级（2026-11-20）：「未打包插件要能看出浏览器里跑的是哪一版」「限时要连带中止，不只是不等」换个项目也成立，可提议并进全局 G-35。
+
+## L-27 ChatGPT 页面里藏着同一对话的副本：按选择器查全页会把副本也算进去（2026-11-23）
+
+- 现象：#28 合并后在真实 Chrome 里验只导 PDF，ChatGPT 一个 1 问 1 答的对话，卡片标黄「读对话 2 条，漏了 2 条（滚动时没渲染出来）」；PDF 内容本身是对的。测试页上从来没出现过。
+- 根因：ChatGPT 新版应用框架在页面里留着一块隐藏的页面层（祖先 `display:none`，带 `data-app-shell-page-surface`），里面是同一对话（或刚看过的另一个对话）每一问每一答的副本，`data-chatgpt-search-unit-key` 一模一样、高度 0。`threadItems()` 用 `querySelectorAll` 查全页，副本也算进去；`readThread()` 等不到副本渲染，记成漏了，每条还白等 3 次。
+- 正确做法：按页面标记查「对话里的每一条」时，只认 `checkVisibility()` 为真的（`threadItems()` 已改）。测试页要照真实页面放一份 `display:none` 的副本。改 `adapter.ts` 前在真实页面上数一下「查到几个、看得见几个」。
+- 证据：`tests/e2e.test.mjs`「ChatGPT 页面里藏着一份对话副本…」（旧代码下报红：「读对话 2 条…漏了 4 条」，`~/Library/Application Support/chatgpt-clipper/evidence/2026-11-23-issue-30/red-old-code.txt`）。真实页面上这一层的祖先链是 2026-11-23 用 Claude in Chrome 查的。
+- 升级：〔提醒〕未升级（2026-11-23）：只和 ChatGPT 页面结构有关；端到端用例「ChatGPT 页面里藏着一份对话副本…」能复现，但端到端没接进推送前检查。

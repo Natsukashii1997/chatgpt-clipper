@@ -1431,6 +1431,39 @@ describe('导出 PDF', () => {
     });
   });
 
+  test('ChatGPT 页面里藏着一份对话副本（新版应用框架的隐藏页面层，#30）：只导 PDF 不把副本算进去，不报「漏了」', async () => {
+    await page.bringToFront();
+    const turns = '[data-chatgpt-search-unit-key$=":user"], [data-chatgpt-search-unit-key$=":assistant"]';
+    // 从开头到被拉的这一条，页面上看得见的有几条
+    const shown = await page.evaluate(([sel, ans]) => {
+      const end = document.querySelector(ans);
+      return [...document.querySelectorAll(sel)].filter(t => t === end || t.compareDocumentPosition(end) & Node.DOCUMENT_POSITION_FOLLOWING).length;
+    }, [turns, ANSWER]);
+    // 照真实页面：同样的每一问每一答在一个 display:none 的层里再来一份
+    await page.evaluate(sel => {
+      const hid = document.createElement('div');
+      hid.id = 'hidden-copy';
+      hid.style.display = 'none';
+      document.querySelectorAll(sel).forEach(t => hid.appendChild(t.cloneNode(true)));
+      hid.querySelectorAll('clipper-ribbon').forEach(r => r.remove());
+      document.body.prepend(hid);
+    }, turns);
+    try {
+      await page.locator('clipper-dock .card').evaluateAll(cs => cs.forEach(c => c.setAttribute('data-old', '')));
+      const before = await sw.evaluate(() => self.__pdfNames.length), rib = page.locator(`${ANSWER} clipper-ribbon button:visible`).last();
+      await rib.scrollIntoViewIfNeeded();
+      await pull(page, rib, 250);
+      const card = page.locator('clipper-dock .card:not([data-old])').filter({ has: page.locator('.loc') }).first();
+      await card.waitFor({ timeout: 60_000 });
+      const text = (await card.innerText()).replace(/\s+/g, ' ');
+      assert.ok(!text.includes('漏了'), text);
+      assert.ok(text.includes(`读对话 ${shown} 条`), `该读 ${shown} 条：${text}`);
+      assert.ok((await lastPdf(before)).pages >= 1);
+    } finally {
+      await page.evaluate(() => document.getElementById('hidden-copy')?.remove());
+    }
+  });
+
   test('导出失败：写「没导出成」和中文原因（Chrome 的英文报错翻成怎么办）、点「重试」再导；打印用的标签页都关掉', async () => {
     await page.bringToFront();
     const card = await collectCard(page, `${ANSWER} clipper-ribbon button`), tabs = ctx.pages().length;

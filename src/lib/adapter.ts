@@ -247,7 +247,8 @@ export function userText(u: HTMLElement): string {
 /** 整段收藏（FR-13）：页面上现有的每一问每一答。order 是在整段对话里的顺序号（各站怎么取见 site.order） */
 export interface ThreadItem { role: 'user' | 'assistant'; el: HTMLElement; order: number }
 export function threadItems(): ThreadItem[] {
-  return [...document.querySelectorAll<HTMLElement>(`${site.question}, ${ANSWER_SELECTOR}`)].map((el, i) => ({
+  // 只认看得见的：ChatGPT 新版应用框架在页面里留着一块隐藏的页面层（祖先 display:none），里面有同一对话每一问每一答的副本（#30）
+  return [...document.querySelectorAll<HTMLElement>(`${site.question}, ${ANSWER_SELECTOR}`)].filter(el => el.checkVisibility()).map((el, i) => ({
     role: el.matches(ANSWER_SELECTOR) ? 'assistant' : 'user', el, order: site.order(el, i),
   }));
 }
