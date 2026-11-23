@@ -100,8 +100,9 @@ const chatgptSite: Site = {
   order: (_el, i) => i,
   stableOrder: false,
   itemKey: (el, i) => el.dataset.chatgptSearchUnitKey ?? el.dataset.chatgptSearchMessageIds ?? `#${i}`,
-  // 生成中输入框的发送键换成停止键；只算最后一条回答（未在真实页面侦察，#28 合并后在真实 Chrome 里验）
-  streaming: el => !!document.querySelector('[data-testid="stop-button"]') && findAnswers().at(-1) === el,
+  // 每一轮的问答外面套着 data-talvt-turn-state：in_progress 生成中、cancelled 用户停了、complete 完成；
+  // 停止键没有数据属性、只有随界面语言变的 aria-label，不用它（docs/recon/2026-11-23-ChatGPT生成中标记侦察记录.md，#35）
+  streaming: el => el.closest('[data-talvt-turn-state]')?.getAttribute('data-talvt-turn-state') === 'in_progress',
   marks: CHATGPT_MARKS,
 };
 

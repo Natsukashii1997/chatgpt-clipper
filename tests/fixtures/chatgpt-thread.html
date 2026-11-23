@@ -2,7 +2,9 @@
 <!-- 仿 ChatGPT 网页版的长对话（整段读取 #32 用，内容是编的）。结构照 docs/recon/2026-11-23-ChatGPT长对话虚拟列表侦察记录.md：
      每一轮包在 [data-virtualized-turn] 里（没有序号），问答各一条 data-chatgpt-search-unit-key；虚拟列表，只留视口上下 200px 内的轮，
      远处的从页面上删掉，上下用占位撑出总高度；一次滚动超过 3 屏会被拉回原处（真实页面直接设到顶会被拉回）；打开时停在底部。
-     「贴住最新消息」：没收到过滚轮事件时，一渲染出更早的轮就拉回底部；收到滚轮事件后不再拉，回到底部又重新贴住（真实页面实测，#32） -->
+     「贴住最新消息」：没收到过滚轮事件时，一渲染出更早的轮就拉回底部；收到滚轮事件后不再拉，回到底部又重新贴住（真实页面实测，#32）。
+     每一轮的问答外面套一层 data-talvt-turn-state：complete 完成、in_progress 生成中、cancelled 用户停了；生成中输入框旁是不带
+     data-testid 的「停止」键（docs/recon/2026-11-23-ChatGPT生成中标记侦察记录.md，#35）。测试用 setTurnState(轮号, 状态) 切换 -->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -18,6 +20,7 @@ p{margin:0 0 12px}
 </style>
 </head>
 <body>
+<div class="composer"></div>
 <div class="scroller"><div class="list"><div class="pad top"></div><div class="pad bottom"></div></div></div>
 <script>
 const TURNS = 6, sc = document.querySelector('.scroller'), list = document.querySelector('.list');
@@ -26,7 +29,7 @@ const turns = [];
 let y = 0;
 for (let k = 1; k <= TURNS; k++) {
   const paras = 6 + (k % 3) * 4, h = 140 + paras * 72;
-  turns.push({ top: y, h, html: `<div data-chatgpt-search-unit-key="vt-${k}:0:user"><div class="user-bubble">第 ${k} 问：请讲讲第 ${k} 个主题的要点</div></div>`
+  turns.push({ top: y, h, state: 'complete', html: `<div data-chatgpt-search-unit-key="vt-${k}:0:user"><div class="user-bubble">第 ${k} 问：请讲讲第 ${k} 个主题的要点</div></div>`
     + `<div data-chatgpt-search-unit-key="vt-${k}:2:assistant"><h2>第 ${k} 条回答</h2>`
     + Array.from({ length: paras }, (_, i) => `<p>第 ${k} 条回答的第 ${i + 1} 段：这是一段编出来的文字，用来撑出回答的高度，看整段读取能不能逐轮读到。</p>`).join('') + '</div>' });
   y += h + 12;
@@ -46,7 +49,7 @@ function render() {
       el = document.createElement('div');
       el.setAttribute('data-virtualized-turn', '');
       el.style.cssText = `contain:size;height:${turns[i].h}px;margin-top:12px`;
-      el.innerHTML = turns[i].html;
+      el.innerHTML = `<div data-talvt-turn-state="${turns[i].state}">${turns[i].html}</div>`;
       shown.set(i, el);
     }
     after.after(el);
@@ -66,6 +69,12 @@ sc.addEventListener('scroll', () => {
   clearTimeout(t);
   t = setTimeout(render, 100);
 });
+/** 改第 k 轮的状态（页面上现有的那轮一起改）；有一轮在生成时输入框旁显示「停止」键 */
+function setTurnState(k, state) {
+  turns[k - 1].state = state;
+  shown.get(k - 1)?.querySelector('[data-talvt-turn-state]').setAttribute('data-talvt-turn-state', state);
+  document.querySelector('.composer').innerHTML = turns.some(t => t.state === 'in_progress') ? '<button type="button" aria-label="停止">■</button>' : '';
+}
 render();
 sc.scrollTop = sc.scrollHeight;
 at = sc.scrollTop;
